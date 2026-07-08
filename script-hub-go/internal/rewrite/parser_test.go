@@ -1,6 +1,7 @@
 package rewrite
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -180,5 +181,29 @@ func TestApplyJsc(t *testing.T) {
 	out = ApplyJsc(mk(), "bar", "", "surge", "", false, "", "", "", "", "")
 	if out[0].ScriptPath != "https://example.com/foo.js" {
 		t.Fatalf("non-matching jsc should be unchanged: %s", out[0].ScriptPath)
+	}
+}
+
+func TestRandomIconURL(t *testing.T) {
+	u := randomIconURL("Doraemon(100P)")
+	if !strings.HasPrefix(u, "https://github.com/Toperlock/Quantumult/raw/main/icon/Doraemon/Doraemon-") {
+		t.Fatalf("random icon url wrong: %s", u)
+	}
+	if !strings.HasSuffix(u, ".png") {
+		t.Fatalf("random icon should be png: %s", u)
+	}
+	// gif library
+	u = randomIconURL("SomeGif(50P)")
+	if !strings.HasSuffix(u, ".gif") {
+		t.Fatalf("gif library should produce .gif: %s", u)
+	}
+}
+
+func TestApplyIconReplacementBareName(t *testing.T) {
+	mod := &ParsedModule{Icon: "color"}
+	ApplyIconReplacement(context.Background(), mod, map[string]string{}, nil, false)
+	// Without network, lookup returns "" so icon stays as-is (bare name)
+	if mod.Icon != "color" && mod.Icon != "" {
+		t.Fatalf("bare icon name without network should stay: %s", mod.Icon)
 	}
 }

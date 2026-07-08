@@ -1,9 +1,15 @@
 package rewrite
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"math/rand"
 	"regexp"
 	"strings"
+	"sync"
+
+	"github.com/script-hub-org/script-hub/internal/httpclient"
 )
 
 // --- Parameter Modification Functions ---
@@ -509,6 +515,113 @@ func appShortName(targetApp string) string {
 	}
 	return t
 }
+
+// keLeeIconURL is the icon name→URL mapping source (luestr/IconResource).
+const keLeeIconURL = "https://raw.githubusercontent.com/luestr/IconResource/main/KeLee_icon.json"
+
+var (
+	keLeeIconCache []keLeeIcon
+	keLeeIconMu    sync.Mutex
+)
+
+type keLeeIcon struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+// keLeeIcons fetches (and caches) the KeLee icon list.
+func keLeeIcons(ctx context.Context, client *httpclient.Client) []keLeeIcon {
+	if client == nil {
+		return nil
+	}
+	keLeeIconMu.Lock()
+	defer keLeeIconMu.Unlock()
+	if keLeeIconCache != nil {
+		return keLeeIconCache
+	}
+	body, status, err := client.Get(ctx, keLeeIconURL)
+	if err != nil || status != 200 {
+		return nil
+	}
+	var wrapper struct {
+		Icons []keLeeIcon `json:"icons"`
+	}
+	if json.Unmarshal([]byte(body), &wrapper) == nil {
+		keLeeIconCache = wrapper.Icons
+	}
+	return keLeeIconCache
+}
+
+// lookupIconURL resolves a bare icon name to a URL via the KeLee mapping.
+func lookupIconURL(ctx context.Context, client *httpclient.Client, name string) string {
+	for _, ic := range keLeeIcons(ctx, client) {
+		if ic.Name == name {
+			return ic.URL
+		}
+	}
+	return ""
+}
+
+// randomIconURL builds a random sticker icon URL from an icon library spec
+// like "Doraemon(100P)". Mirrors Rewrite-Parser.js randomicon.
+func randomIconURL(library string) string {
+	name := library
+	format := ".png"
+	if i := strings.Index(library, "("); i > 0 {
+		name = library[:i]
+		rest := library[i+1:]
+		if j := strings.Index(rest, "P"); j > 0 {
+			rest = rest[:j]
+		}
+		if n, err := fmt.Sscanf(rest, "%d"); err == nil && n > 0 {
+			_ = n
+		}
+	}
+	if matched, _ := regexp.MatchString(`(?i)gif`, name); matched {
+		format = ".gif"
+	}
+	// Parse count for random range (stickerStartNum=1001)
+	count := 100
+	if i := strings.Index(library, "("); i > 0 {
+		rest := library[i+1:]
+		if j := strings.Index(rest, "P"); j > 0 {
+			fmt.Sscanf(rest[:j], "%d", &count)
+		}
+	}
+	num := 1001 + rand.Intn(count)
+	return "https://github.com/Toperlock/Quantumult/raw/main/icon/" + name + "/" + name + "-" + fmt.Sprintf("%d", num) + format
+}
+
+// ApplyIconReplacement resolves the module icon per Rewrite-Parser.js:
+//   - if iconReplace is enabled (not "禁用"), use a random sticker from iconLibrary
+//   - else if the icon is a bare name (no "/"), resolve via KeLee mapping
+// Called from the parser where an httpclient is available.
+func ApplyIconReplacement(ctx context.Context, module *ParsedModule, args map[string]string, client *httpclient.Client, isStashOrLoon bool) {
+	iconReplace := argsValue(args, "iconReplace", "禁用")
+	if isStashOrLoon && iconReplace != "禁用" {
+		library := argsValue(args, "iconLibrary", "Doraemon(100P)")
+		module.Icon = randomIconURL(library)
+		return
+	}
+	icon := args["icon"]
+	if icon == "" {
+		icon = module.Icon
+	}
+	if icon != "" && !strings.Contains(icon, "/") {
+		if u := lookupIconURL(ctx, client, icon); u != "" {
+			module.Icon = u
+		}
+	}
+}
+
+func argsValue(args map[string]string, key, fallback string) string {
+	if v, ok := args[key]; ok && v != "" {
+		return v
+	}
+	return fallback
+}
+
+// isTrue checks if a string represents a truthy value.
 
 // isTrue checks if a string represents a truthy value.
 func isTrue(s string) bool {

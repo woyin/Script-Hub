@@ -197,6 +197,10 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 		// Apply metadata overrides (name, desc, icon)
 		ApplyMetadataOverrides(&modules[i], input.Arguments)
 
+		// Apply icon replacement / KeLee icon name resolution
+		ApplyIconReplacement(ctx, &modules[i], input.Arguments, p.client,
+			strings.Contains(input.TargetApp, "stash") || strings.Contains(input.TargetApp, "loon"))
+
 		// Apply script-level modifications
 		modules[i].Scripts = ApplyArgModification(modules[i].Scripts, input.Arguments["arg"], input.Arguments["argv"])
 		modules[i].Scripts = ApplyScriptNameModification(modules[i].Scripts, input.Arguments["njsnametarget"], input.Arguments["njsname"])
