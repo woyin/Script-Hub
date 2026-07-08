@@ -90,6 +90,7 @@ func extractConvertReq(rawURL string) string {
 		return ""
 	}
 	rest := parts[1]
+	rest = strings.TrimPrefix(rest, "_start_/")
 	endParts := strings.SplitN(rest, "/_end_/", 2)
 	if len(endParts) < 1 {
 		return rest
