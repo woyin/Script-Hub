@@ -141,15 +141,13 @@ func writeResponse(w http.ResponseWriter, output types.ResponseWriter, cfg *conf
 	resp := output.GetResponse()
 	baseURL := cfg.BaseURL
 
-	w.WriteHeader(resp.Status)
 	for k, v := range resp.Headers {
 		w.Header().Set(k, v)
 	}
 	body := resp.Body
-	if strings.Contains(body, "https://script.hub/") {
-		body = strings.ReplaceAll(body, "https://script.hub/", baseURL+"/")
-		body = strings.ReplaceAll(body, "http://script.hub/", baseURL+"/")
-	}
+	body = strings.ReplaceAll(body, "https://script.hub/", baseURL+"/")
+	body = strings.ReplaceAll(body, "http://script.hub/", baseURL+"/")
+	w.WriteHeader(resp.Status)
 	w.Write([]byte(body))
 }
 

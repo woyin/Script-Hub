@@ -118,14 +118,7 @@ func ApplyEngineModification(scripts []ParsedRewrite, engineTarget, engineVal st
 	for i := range scripts {
 		for j := 0; j < count; j++ {
 			if containsKeyword(scripts[i], targets[j]) {
-				// Append engine parameter to the script's Arguments or ScriptPath
-				// In Surge, engine is specified as a script parameter
-				engineSuffix := ",engine=" + values[j]
-				if scripts[i].Arguments != "" {
-					scripts[i].Arguments += engineSuffix
-				} else {
-					scripts[i].Arguments = "engine=" + values[j]
-				}
+				scripts[i].Engine = values[j]
 			}
 		}
 	}

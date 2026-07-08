@@ -75,18 +75,37 @@ func (c *Client) Post(ctx context.Context, url string, body io.Reader) (string, 
 }
 
 func (c *Client) doRequest(req *http.Request) (string, int, error) {
+	bodyBytes, status, err := c.doRequestBytes(req)
+	if err != nil {
+		return "", status, err
+	}
+	return string(bodyBytes), status, nil
+}
+
+// GetBytesWithHeaders performs an HTTP GET and returns raw bytes, status, and response headers.
+func (c *Client) GetBytesWithHeaders(ctx context.Context, url string, headers map[string]string) ([]byte, int, map[string]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("creating GET request: %w", err)
+	}
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return "", 0, fmt.Errorf("executing request: %w", err)
+		return nil, 0, nil, fmt.Errorf("executing request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	var reader io.Reader = resp.Body
-	// Handle gzip encoding
 	if resp.Header.Get("Content-Encoding") == "gzip" {
 		gzReader, err := gzip.NewReader(resp.Body)
 		if err != nil {
-			return "", resp.StatusCode, fmt.Errorf("creating gzip reader: %w", err)
+			return nil, resp.StatusCode, nil, fmt.Errorf("creating gzip reader: %w", err)
 		}
 		defer gzReader.Close()
 		reader = gzReader
@@ -94,10 +113,40 @@ func (c *Client) doRequest(req *http.Request) (string, int, error) {
 
 	bodyBytes, err := io.ReadAll(reader)
 	if err != nil {
-		return "", resp.StatusCode, fmt.Errorf("reading response body: %w", err)
+		return nil, resp.StatusCode, nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	return string(bodyBytes), resp.StatusCode, nil
+	respHeaders := make(map[string]string)
+	for k, v := range resp.Header {
+		if len(v) > 0 {
+			respHeaders[k] = v[0]
+		}
+	}
+	return bodyBytes, resp.StatusCode, respHeaders, nil
+}
+
+func (c *Client) doRequestBytes(req *http.Request) ([]byte, int, error) {
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var reader io.Reader = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gzReader, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			return nil, resp.StatusCode, fmt.Errorf("creating gzip reader: %w", err)
+		}
+		defer gzReader.Close()
+		reader = gzReader
+	}
+
+	bodyBytes, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("reading response body: %w", err)
+	}
+	return bodyBytes, resp.StatusCode, nil
 }
 
 // ParseCustomHeaders parses custom headers from the format used in query parameters.

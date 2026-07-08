@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/script-hub-org/script-hub/internal/config"
 	"github.com/script-hub-org/script-hub/internal/eval"
@@ -59,7 +61,6 @@ func NewConverter(cfg *config.Config) *Converter {
 // Convert fetches and converts a QX script to the target app format.
 func (c *Converter) Convert(ctx context.Context, input ConvertInput) (ConvertOutput, error) {
 	var scriptContent string
-	var err error
 
 	sourceType := input.SourceType
 	isScriptConversion := strings.HasSuffix(sourceType, "-script")
@@ -74,8 +75,9 @@ func (c *Converter) Convert(ctx context.Context, input ConvertInput) (ConvertOut
 
 	// subconverter mode: proxy the request through an external subconverter API
 	if subconverterURL != "" {
+		subURL := buildSubconverterURL(subconverterURL, input.URL, input.LocalText, input.Arguments)
 		reqHeaders := httpclient.ParseCustomHeaders(input.Arguments["headers"])
-		body, _, gerr := c.client.GetWithHeaders(ctx, subconverterURL, reqHeaders)
+		body, _, gerr := c.client.GetWithHeaders(ctx, subURL, reqHeaders)
 		if gerr != nil {
 			return ConvertOutput{
 				Content: gerr.Error(),
@@ -108,17 +110,26 @@ func (c *Converter) Convert(ctx context.Context, input ConvertInput) (ConvertOut
 		}, nil
 	}
 
+	// mock type with keepHeader: fetch as binary and build mock response
+	// matching JS script-converter.js mock+keepHeader branch (L338-340)
+	if sourceType == "mock" && keepHeader && input.URL != "" && !strings.HasPrefix(input.URL, "http://local.text") {
+		return c.handleMockKeepHeader(ctx, input, targetApp)
+	}
+
 	// Fetch script content
+	var upstreamHeaders map[string]string
 	if input.URL != "" && !strings.HasPrefix(input.URL, "http://local.text") {
 		reqHeaders := httpclient.ParseCustomHeaders(input.Arguments["headers"])
-		scriptContent, _, err = c.client.GetWithHeaders(ctx, input.URL, reqHeaders)
-		if err != nil {
+		rawBytes, _, respHeaders, ferr := c.client.GetBytesWithHeaders(ctx, input.URL, reqHeaders)
+		if ferr != nil {
 			return ConvertOutput{
-				Content: "Script fetch error: " + err.Error(),
+				Content: "Script fetch error: " + ferr.Error(),
 				Headers: map[string]string{"Content-Type": "text/plain; charset=UTF-8"},
 				Status:  500,
-			}, err
+			}, ferr
 		}
+		scriptContent = string(rawBytes)
+		upstreamHeaders = respHeaders
 	} else {
 		scriptContent = input.LocalText
 	}
@@ -162,8 +173,14 @@ func (c *Converter) Convert(ctx context.Context, input ConvertInput) (ConvertOut
 	// Apply eval operations on converted content (after conversion)
 	converted = eval.ApplyAfterConversion(ctx, converted, evalParams, c.client)
 
-	// Build response headers
-	headers := c.corsHeaders()
+	// Build response headers: merge upstream headers with CORS
+	headers := make(map[string]string)
+	for k, v := range upstreamHeaders {
+		headers[k] = v
+	}
+	for k, v := range c.corsHeaders() {
+		headers[k] = v
+	}
 	headers = applyHeaderOverrides(headers, setHeader, setContentType, targetApp, input.URL)
 
 	return ConvertOutput{
@@ -171,6 +188,126 @@ func (c *Converter) Convert(ctx context.Context, input ConvertInput) (ConvertOut
 		Headers: headers,
 		Status:  200,
 	}, nil
+}
+
+// handleMockKeepHeader handles mock type with keepHeader=true.
+// Fetches the URL as raw bytes (preserving binary content), builds a mock
+// response script that either wraps the body as a string or as a binary
+// Uint8Array, and forwards the original response headers with CORS.
+// Matches JS script-converter.js mock+keepHeader branch (L338-470).
+func (c *Converter) handleMockKeepHeader(ctx context.Context, input ConvertInput, targetApp string) (ConvertOutput, error) {
+	reqHeaders := httpclient.ParseCustomHeaders(input.Arguments["headers"])
+	rawBytes, status, origHeaders, err := c.client.GetBytesWithHeaders(ctx, input.URL, reqHeaders)
+	if err != nil {
+		return ConvertOutput{
+			Content: "Script fetch error: " + err.Error(),
+			Headers: map[string]string{"Content-Type": "text/plain; charset=UTF-8"},
+			Status:  500,
+		}, err
+	}
+
+	isBinary := !utf8.Valid(rawBytes)
+
+	// Build mock response headers: original headers + CORS
+	mockHeaders := make(map[string]string)
+	for k, v := range origHeaders {
+		mockHeaders[k] = v
+	}
+	mockHeaders["Access-Control-Allow-Origin"] = "*"
+	mockHeaders["Access-Control-Allow-Methods"] = "POST,GET,OPTIONS,PUT,DELETE"
+	mockHeaders["Access-Control-Allow-Headers"] = "Origin, X-Requested-With, Content-Type, Accept"
+
+	// Apply user-specified header/contentType overrides
+	setHeader := input.Arguments["header"]
+	setContentType := input.Arguments["contentType"]
+	if setHeader != "" {
+		for _, i := range strings.Split(setHeader, "|") {
+			i = strings.TrimSpace(i)
+			if strings.Contains(i, ":") {
+				kv := strings.SplitN(i, ":", 2)
+				k := strings.TrimSpace(kv[0])
+				v := strings.TrimSpace(kv[1])
+				if k != "" && v != "" {
+					mockHeaders[k] = v
+				}
+			}
+		}
+	}
+	if targetApp == "plain-text" || strings.HasSuffix(input.URL, ".txt") {
+		setContentTypeKey(mockHeaders, "text/plain; charset=utf-8")
+	}
+	if setContentType != "" {
+		setContentTypeKey(mockHeaders, setContentType)
+	}
+	for _, k := range []string{"Content-Type", "content-type"} {
+		if v, ok := mockHeaders[k]; ok && v != "" {
+			mockHeaders[k] = utf8ContentType(v)
+		}
+	}
+	for _, k := range []string{"content-length", "Content-Length", "content-encoding", "Content-Encoding", "content-security-policy", "Content-Security-Policy"} {
+		delete(mockHeaders, k)
+	}
+
+	mockHeadersJSON, _ := json.Marshal(mockHeaders)
+
+	var scriptBody string
+	if isBinary {
+		// Binary mock: encode bytes as charcode string, use strToArray on JS side
+		binStr := binArrayToStr(rawBytes)
+		binStrJSON, _ := json.Marshal(binStr)
+		scriptBody = fmt.Sprintf(`function strToArray(str) {
+  var ret = new Uint8Array(str.length)
+  for (var i = 0; i < str.length; i++) {
+    ret[i] = str.charCodeAt(i)
+  }
+  return ret
+}
+
+let done = $done
+let result = {
+  response: {
+      status: %d,
+      headers: %s,
+      body: strToArray(%s),
+    },
+}
+done(result)`, status, string(mockHeadersJSON), string(binStrJSON))
+	} else {
+		// Text mock: JSON-encode the body string
+		bodyJSON, _ := json.Marshal(string(rawBytes))
+		scriptBody = fmt.Sprintf(`let done = $done
+let result = {
+  response: {
+      status: %d,
+      body: %s,
+      headers: %s,
+    },
+}
+done(result)`, status, string(bodyJSON), string(mockHeadersJSON))
+	}
+
+	// Apply eval on the final mock script
+	evalParams := eval.EvalParamsFromArgs(input.Arguments)
+	scriptBody = eval.ApplyAfterConversion(ctx, scriptBody, evalParams, c.client)
+
+	// The outer response is always a JS script served as text/plain
+	outerHeaders := c.corsHeaders()
+	return ConvertOutput{
+		Content: scriptBody,
+		Headers: outerHeaders,
+		Status:  200,
+	}, nil
+}
+
+// binArrayToStr converts raw bytes to a string by treating each byte as a
+// character code, matching the JS binArrayToStr function in script-converter.js.
+func binArrayToStr(data []byte) string {
+	var b strings.Builder
+	b.Grow(len(data))
+	for _, byte := range data {
+		b.WriteByte(byte)
+	}
+	return b.String()
 }
 
 // corsHeaders returns the default CORS response headers.
@@ -730,6 +867,52 @@ func jsDelivrConvert(urlStr string) string {
 		}
 	}
 	return urlStr
+}
+
+// buildSubconverterURL constructs the subconverter request URL with default
+// parameters and user-supplied query overrides, matching script-converter.js
+// subconverter branch (L293-322).
+func buildSubconverterURL(subconverterURL, req, localText string, args map[string]string) string {
+	exclude := map[string]bool{
+		"type": true, "evalScriptori": true, "evalScriptmodi": true,
+		"evalUrlori": true, "evalUrlmodi": true, "subconverter": true,
+		"headers": true,
+	}
+
+	params := url.Values{}
+	// Hardcoded defaults from JS
+	params.Set("insert", "false")
+	params.Set("append_type", "false")
+	params.Set("strict", "false")
+	params.Set("sort", "true")
+	params.Set("emoji", "false")
+	params.Set("list", "true")
+	params.Set("udp", "true")
+	params.Set("tfo", "false")
+	params.Set("expand", "true")
+	params.Set("scv", "true")
+	params.Set("fdn", "true")
+	params.Set("surge.doh", "true")
+	params.Set("clash.doh", "true")
+	params.Set("new_name", "true")
+	// url defaults to localtext || req
+	if localText != "" {
+		params.Set("url", localText)
+	} else {
+		params.Set("url", req)
+	}
+	// Spread user query params (overrides defaults)
+	for k, v := range args {
+		if !exclude[k] && v != "" {
+			params.Set(k, v)
+		}
+	}
+
+	sep := "?"
+	if strings.Contains(subconverterURL, "?") {
+		sep = "&"
+	}
+	return subconverterURL + sep + params.Encode()
 }
 
 // isTrue checks if a string represents a truthy value.

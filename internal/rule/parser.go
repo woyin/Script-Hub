@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/script-hub-org/script-hub/internal/config"
+	"github.com/script-hub-org/script-hub/internal/eval"
 	"github.com/script-hub-org/script-hub/internal/httpclient"
 	"github.com/script-hub-org/script-hub/internal/types"
 )
@@ -110,6 +111,10 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 		}, nil
 	}
 
+	// Apply eval operations on original content (before conversion)
+	evalParams := eval.EvalParamsFromArgs(input.Arguments)
+	body = eval.ApplyBeforeConversion(ctx, body, evalParams, p.client)
+
 	// Parse and convert rules
 	rules := p.parseRules(body, input)
 
@@ -120,6 +125,9 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 	output = strings.ReplaceAll(output, "t&zd;", ",")
 	// Collapse the JS-style excluded marker spacing that may survive in output
 	output = strings.ReplaceAll(output, " ;#", " #")
+
+	// Apply eval operations on converted content (after conversion)
+	output = eval.ApplyAfterConversion(ctx, output, evalParams, p.client)
 
 	return ParseOutput{
 		Content: output,

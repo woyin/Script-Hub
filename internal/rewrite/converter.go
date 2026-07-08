@@ -348,13 +348,9 @@ func (p *Parser) classifySurgeScript(rw ParsedRewrite, out *surgeOutput, args ma
 	parts = append(parts, fmt.Sprintf("requires-body=%d", requiresBody))
 	if rw.MaxSize != "" {
 		parts = append(parts, fmt.Sprintf("max-size=%s", rw.MaxSize))
-	} else {
-		parts = append(parts, "max-size=0")
 	}
 	if rw.ScriptUpdateInterval != "" {
 		parts = append(parts, fmt.Sprintf("script-update-interval=%s", rw.ScriptUpdateInterval))
-	} else {
-		parts = append(parts, "script-update-interval=86400")
 	}
 	parts = append(parts, fmt.Sprintf("timeout=%d", timeout))
 	if rw.Arguments != "" {
@@ -374,9 +370,6 @@ func (p *Parser) classifySurgeScript(rw ParsedRewrite, out *surgeOutput, args ma
 	}
 	if rw.ImgURL != "" {
 		parts = append(parts, fmt.Sprintf("img-url=%s", rw.ImgURL))
-	}
-	if rw.Enable {
-		parts = append(parts, "enable=true")
 	}
 
 	out.Scripts = append(out.Scripts, scriptName+" = "+strings.Join(parts, ", "))
@@ -773,14 +766,28 @@ func (p *Parser) convertLoonScript(rw ParsedRewrite) string {
 		scriptName = sanitizeName(rw.Pattern)
 	}
 
-	// Loon cron format: cron "expression" script-path=..., tag=name
+	// Loon cron format: cron "expression" script-path=..., tag=name, enable=..., img-url=..., argument=...
 	if rw.ScriptType == "cron" {
 		cronexp := rw.CronExp
 		if cronexp == "" {
 			cronexp = "0 0 * * *"
 		}
 		cronexp = strings.ReplaceAll(cronexp, `"`, "")
-		return fmt.Sprintf(`cron "%s" script-path=%s, timeout=%d, tag=%s`, cronexp, rw.ScriptPath, timeout, scriptName)
+		parts := []string{
+			fmt.Sprintf(`cron "%s" script-path=%s`, cronexp, rw.ScriptPath),
+			fmt.Sprintf("timeout=%d", timeout),
+			fmt.Sprintf("tag=%s", scriptName),
+		}
+		if rw.Enable {
+			parts = append(parts, "enable=true")
+		}
+		if rw.ImgURL != "" {
+			parts = append(parts, fmt.Sprintf("img-url=%s", rw.ImgURL))
+		}
+		if rw.Arguments != "" {
+			parts = append(parts, fmt.Sprintf("argument=%s", rw.Arguments))
+		}
+		return strings.Join(parts, ", ")
 	}
 
 	var opts []string
@@ -792,6 +799,12 @@ func (p *Parser) convertLoonScript(rw ParsedRewrite) string {
 	}
 	if rw.Arguments != "" {
 		opts = append(opts, fmt.Sprintf("argument=%s", rw.Arguments))
+	}
+	if rw.Enable {
+		opts = append(opts, "enable=true")
+	}
+	if rw.ImgURL != "" {
+		opts = append(opts, fmt.Sprintf("img-url=%s", rw.ImgURL))
 	}
 
 	scriptType := strings.TrimPrefix(rw.ScriptType, "http-")
