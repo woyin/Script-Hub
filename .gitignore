@@ -1,5 +1,5 @@
 ############################
-# OS X
+# OS
 ############################
 
 .DS_Store
@@ -9,173 +9,42 @@ Icon
 .Spotlight-V100
 .Trashes
 ._*
-
-
-############################
-# Linux
-############################
-
 *~
-
-
-############################
-# Windows
-############################
-
 Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
-*.cab
-*.msi
-*.msm
-*.msp
-
 
 ############################
-# Packages
+# IDE
 ############################
 
-# *.7z
-# *.csv
-# *.dat
-# *.dmg
-# *.gz
-# *.iso
-# *.jar
-# *.rar
-# *.tar
-# *.zip
-# *.com
-# *.class
-# *.dll
-# *.exe
-# *.o
-# *.seed
-# *.so
-# *.swo
-# *.swp
-# *.swn
-# *.swm
-# *.out
-# *.pid
-
-
-############################
-# Logs and databases
-############################
-
-.tmp
-*.log
-*.sql
-*.sqlite
-*.sqlite3
-
-
-############################
-# Misc.
-############################
-
-*#
-ssl
 .idea
-nbproject
-public/uploads/*
-!public/uploads/.gitkeep
+.vscode
+*.swp
+*.swo
 
 ############################
-# Node.js
+# Go
 ############################
 
-lib-cov
-lcov.info
-pids
-logs
-results
-node_modules
-.node_history
-
+script-hub
+script-hub.exe
+*.exe
+*.test
+*.out
+vendor/
 
 ############################
-# Tests
+# Environment
 ############################
-testApp
-coverage
-report
-mochawesome-report
-
-############################
-# cache
-############################
-.stylelintcache
-.eslintcache
-
-############################
-# output
-############################
-
-.output
-dist
-out
-tmp.js
-tmp
-logs
-# frontEnd/.next
-
-############################
-# local config
-############################
-
-**/config/local-*.js
-
-############################
-# yarn https://yarnpkg.com/advanced/qa#which-files-should-be-gitignored
-############################
-# If you're using Zero-Installs:
-
-# .yarn/*
-# !.yarn/cache
-# !.yarn/releases
-# !.yarn/plugins
-
-# If you're not using Zero-Installs:
-
-.yarn/*
-!.yarn/releases
-!.yarn/plugins
-.pnp.*
-
-packages/api/build
-packages/api/payloadConfig.json
-.pnpm-store
-
-
-
-/*.json
-!package.json
-!boxjs.json
-!boxjs-dev.json
-!boxjs-test.json
-/*.yaml
-test.js
-
-ql.js
-sendNotify.js
-
-*-local.json
-*-local.js
-*-local.stoverride
-
-box.dat
-*box.dat
-tempCodeRunnerFile.js
 
 .env
+.env.*
 
-10010*.txt
-*cookie.txt
 ############################
-# Go build output
+# Logs
 ############################
-script-hub-go/script-hub
-script-hub-go/script-hub.exe
+
+*.log
+logs/
