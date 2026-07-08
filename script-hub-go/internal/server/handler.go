@@ -147,22 +147,26 @@ func parseQueryString(query string) map[string]string {
 	if query == "" {
 		return result
 	}
-	query = strings.TrimPrefix(query, "?")
+	// Mirror JS parseQueryString: take everything after the FIRST '?'
 	if idx := strings.Index(query, "?"); idx >= 0 {
 		query = query[idx+1:]
+	} else {
+		query = strings.TrimPrefix(query, "?")
 	}
 	for _, pair := range strings.Split(query, "&") {
 		if pair == "" {
 			continue
 		}
 		kv := strings.SplitN(pair, "=", 2)
-		key, _ := url.QueryUnescape(kv[0])
+		// JS uses decodeURIComponent which does NOT decode '+' into space,
+		// so use url.PathUnescape (also leaves '+' alone) instead of QueryUnescape.
+		key, _ := url.PathUnescape(kv[0])
 		if len(kv) == 2 {
-			val, _ := url.QueryUnescape(kv[1])
+			val, _ := url.PathUnescape(kv[1])
 			result[key] = val
-		} else {
-			result[key] = ""
 		}
+		// JS regex requires an '=', so bare flags (no '=') are dropped.
+		_ = key
 	}
 	return result
 }

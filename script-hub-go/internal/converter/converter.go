@@ -2,7 +2,9 @@ package converter
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/script-hub-org/script-hub/internal/config"
@@ -59,13 +61,59 @@ func (c *Converter) Convert(ctx context.Context, input ConvertInput) (ConvertOut
 	var scriptContent string
 	var err error
 
+	sourceType := input.SourceType
+	isScriptConversion := strings.HasSuffix(sourceType, "-script")
+	compatibilityOnly := isTrue(input.Arguments["compatibilityOnly"])
+	keepHeader := input.KeepHeader
+	setHeader := input.Arguments["header"]
+	setContentType := input.Arguments["contentType"]
+	prepend := input.Arguments["prepend"]
+	wrapResponse := isTrue(input.Arguments["wrap_response"])
+	subconverterURL := input.Arguments["subconverter"]
+	targetApp := strings.ToLower(input.TargetApp)
+
+	// subconverter mode: proxy the request through an external subconverter API
+	if subconverterURL != "" {
+		body, _, gerr := c.client.Get(ctx, subconverterURL)
+		if gerr != nil {
+			return ConvertOutput{
+				Content: gerr.Error(),
+				Headers: map[string]string{"Content-Type": "text/plain; charset=UTF-8"},
+				Status:  500,
+			}, gerr
+		}
+		return ConvertOutput{
+			Content: body,
+			Headers: c.corsHeaders(),
+			Status:  200,
+		}, nil
+	}
+
+	// mock type without keepHeader: 302 redirect to the source URL
+	if sourceType == "mock" && !keepHeader && !strings.HasPrefix(input.URL, "http://local.text") {
+		loc := input.URL
+		if input.JsDelivr != "" {
+			loc = jsDelivrConvert(loc)
+		}
+		// Loon quirk: empty body on 3xx triggers issues; JS sends body='loon'
+		body := ""
+		if strings.HasPrefix(targetApp, "loon") {
+			body = "loon"
+		}
+		return ConvertOutput{
+			Content: body,
+			Headers: map[string]string{"Location": loc},
+			Status:  302,
+		}, nil
+	}
+
 	// Fetch script content
 	if input.URL != "" && !strings.HasPrefix(input.URL, "http://local.text") {
 		scriptContent, _, err = c.client.Get(ctx, input.URL)
 		if err != nil {
 			return ConvertOutput{
 				Content: "Script fetch error: " + err.Error(),
-				Headers: map[string]string{"Content-Type": "text/plain; charset=utf-8"},
+				Headers: map[string]string{"Content-Type": "text/plain; charset=UTF-8"},
 				Status:  500,
 			}, err
 		}
@@ -76,7 +124,7 @@ func (c *Converter) Convert(ctx context.Context, input ConvertInput) (ConvertOut
 	if scriptContent == "" {
 		return ConvertOutput{
 			Content: "",
-			Headers: map[string]string{"Content-Type": "text/plain; charset=utf-8"},
+			Headers: map[string]string{"Content-Type": "text/plain; charset=UTF-8"},
 			Status:  200,
 		}, nil
 	}
@@ -85,14 +133,7 @@ func (c *Converter) Convert(ctx context.Context, input ConvertInput) (ConvertOut
 	evalParams := eval.EvalParamsFromArgs(input.Arguments)
 	scriptContent = eval.ApplyBeforeConversion(ctx, scriptContent, evalParams, c.client)
 
-	// Determine if this is a script conversion (type ends with -script)
-	isScriptConversion := strings.HasSuffix(input.SourceType, "-script")
-	compatibilityOnly := isTrue(input.Arguments["compatibilityOnly"])
-	wrapResponse := isTrue(input.Arguments["wrap_response"])
-	prepend := input.Arguments["prepend"]
-
 	// Convert based on target app
-	targetApp := strings.ToLower(input.TargetApp)
 	var converted string
 
 	switch {
@@ -106,20 +147,144 @@ func (c *Converter) Convert(ctx context.Context, input ConvertInput) (ConvertOut
 		converted = scriptContent
 	}
 
+	// Wrap the full prefix+body in a try-catch compatibility guard, matching JS.
+	if isScriptConversion || compatibilityOnly {
+		converted = wrapTryCatch(converted)
+	}
+
+	// mock type: wrap the body into a done({response:{...}}) script payload
+	if sourceType == "mock" {
+		converted = buildMockScript(converted)
+	}
+
 	// Apply eval operations on converted content (after conversion)
 	converted = eval.ApplyAfterConversion(ctx, converted, evalParams, c.client)
 
+	// Build response headers
+	headers := c.corsHeaders()
+	headers = applyHeaderOverrides(headers, setHeader, setContentType, targetApp, input.URL)
+
 	return ConvertOutput{
 		Content: converted,
-		Headers: map[string]string{
-			"Content-Type":                "text/plain; charset=utf-8",
-			"Access-Control-Allow-Origin":  "*",
-			"Access-Control-Allow-Methods": "POST,GET,OPTIONS,PUT,DELETE",
-			"Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept",
-		},
-		Status:      200,
-		ContentType: "text/plain; charset=utf-8",
+		Headers: headers,
+		Status:  200,
 	}, nil
+}
+
+// corsHeaders returns the default CORS response headers.
+func (c *Converter) corsHeaders() map[string]string {
+	return map[string]string{
+		"Content-Type":                "text/plain; charset=UTF-8",
+		"Access-Control-Allow-Origin":  "*",
+		"Access-Control-Allow-Methods": "POST,GET,OPTIONS,PUT,DELETE",
+		"Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept",
+	}
+}
+
+// wrapTryCatch wraps the converted content in the JS try-catch guard that
+// matches script-converter.js — captures errors from the original script and
+// degrades gracefully instead of crashing the whole response.
+func wrapTryCatch(content string) string {
+	return `const _scriptSonverterCompatibilityType = typeof $response !== 'undefined' ? 'response' : typeof $request !== 'undefined' ? 'request' : ''
+const _scriptSonverterCompatibilityDone = $done
+try {
+  ` + content + `
+} catch (e) {
+  console.log('❌ Script Hub 兼容层捕获到原脚本未处理的错误')
+  if (_scriptSonverterCompatibilityType) {
+    console.log('⚠️ 故不修改本次' + (_scriptSonverterCompatibilityType === 'response' ? '响应' : '请求'))
+  } else {
+    console.log('⚠️ 因类型非请求或响应, 抛出错误')
+  }
+  console.log(e)
+  if (_scriptSonverterCompatibilityType) {
+    _scriptSonverterCompatibilityDone({})
+  } else {
+    throw e
+  }
+}`
+}
+
+// buildMockScript wraps the converted body into a done({response:{...}}) payload.
+// Mirrors the JS mock branch: the body becomes the mock response body.
+func buildMockScript(body string) string {
+	bodyJSON, _ := json.Marshal(body)
+	return `
+// mock response generated by Script Hub
+let done = $done
+let result = {
+  response: {
+      status: 200,
+      body: ` + string(bodyJSON) + `,
+      headers: {
+        'Content-Type': 'text/plain; charset=UTF-8',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST,GET,OPTIONS,PUT,DELETE',
+        'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept',
+      },
+    },
+}
+done(result)`
+}
+
+// applyHeaderOverrides applies user-specified header/content-type overrides and
+// charset fixing, mirroring the JS response post-processing.
+func applyHeaderOverrides(headers map[string]string, setHeader, setContentType, targetApp, rawURL string) map[string]string {
+	if setHeader != "" {
+		for _, i := range strings.Split(setHeader, "|") {
+			i = strings.TrimSpace(i)
+			if strings.Contains(i, ":") {
+				kv := strings.SplitN(i, ":", 2)
+				k := strings.TrimSpace(kv[0])
+				v := strings.TrimSpace(kv[1])
+				if k != "" && v != "" {
+					headers[k] = v
+				}
+			}
+		}
+	}
+
+	// plain-text target forces text/plain content type
+	if targetApp == "plain-text" || strings.HasSuffix(rawURL, ".txt") {
+		setContentTypeKey(headers, "text/plain; charset=utf-8")
+	}
+	if setContentType != "" {
+		setContentTypeKey(headers, setContentType)
+	}
+
+	// Append charset=UTF-8 to text/* and application/* content types
+	for _, k := range []string{"Content-Type", "content-type"} {
+		if v, ok := headers[k]; ok && v != "" {
+			headers[k] = utf8ContentType(v)
+		}
+	}
+
+	// Strip headers that must not be forwarded on a converted response
+	for _, k := range []string{
+		"content-length", "Content-Length",
+		"content-encoding", "Content-Encoding",
+		"content-security-policy", "Content-Security-Policy",
+	} {
+		delete(headers, k)
+	}
+	return headers
+}
+
+func setContentTypeKey(headers map[string]string, ct string) {
+	if _, ok := headers["Content-Type"]; ok {
+		headers["Content-Type"] = ct
+	} else {
+		headers["content-type"] = ct
+	}
+}
+
+// utf8ContentType appends charset=UTF-8 to text/application content types.
+func utf8ContentType(t string) string {
+	if regexp.MustCompile(`(?i)^(text|application)/.+`).MatchString(t) &&
+		!regexp.MustCompile(`(?i);\s*charset\s*=\s*`).MatchString(t) {
+		return t + "; charset=UTF-8"
+	}
+	return t
 }
 
 // convertQXToSurge converts QX script syntax to Surge compatible syntax.
