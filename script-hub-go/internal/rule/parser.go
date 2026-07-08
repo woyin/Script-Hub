@@ -329,6 +329,7 @@ func (p *Parser) formatOutput(rules []ruleLine, targetApp string) string {
 	isStash := strings.Contains(target, "stash")
 	isLoon := strings.Contains(target, "loon")
 	isSurge := strings.Contains(target, "surge") || strings.Contains(target, "shadowrocket")
+	isShadowrocket := strings.Contains(target, "shadowrocket")
 	isDomainSet := strings.Contains(target, "domain-set")
 	isDomainSet2 := strings.HasSuffix(target, "2")
 
@@ -367,9 +368,9 @@ func (p *Parser) formatOutput(rules []ruleLine, targetApp string) string {
 		case isLoon && !isDomainSet:
 			formatted = formatLoonRule(rl)
 		case isSurge && !isDomainSet:
-			formatted = formatSurgeRule(rl)
+			formatted = formatSurgeRule(rl, isShadowrocket)
 		default:
-			formatted = formatSurgeRule(rl)
+			formatted = formatSurgeRule(rl, isShadowrocket)
 		}
 		if formatted != "" {
 			ruleSet = append(ruleSet, formatted)
@@ -492,10 +493,13 @@ func formatRuleLine(rl ruleLine, target string) string {
 }
 
 // formatSurgeRule formats a rule for Surge/Shadowrocket.
-func formatSurgeRule(rl ruleLine) string {
+func formatSurgeRule(rl ruleLine, isShadowrocket bool) string {
 	ruleType := strings.ToUpper(rl.RuleType)
 	ruleType = strings.ReplaceAll(ruleType, "PROCESS-PATH", "PROCESS-NAME")
-	ruleType = strings.ReplaceAll(ruleType, "DST-PORT", "DEST-PORT")
+	// Only Surge iOS uses DEST-PORT; Shadowrocket keeps DST-PORT
+	if !isShadowrocket {
+		ruleType = strings.ReplaceAll(ruleType, "DST-PORT", "DEST-PORT")
+	}
 
 	noResolve := ""
 	if rl.NoResolve {

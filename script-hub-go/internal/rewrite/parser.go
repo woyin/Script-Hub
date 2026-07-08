@@ -3,6 +3,7 @@ package rewrite
 import (
 	"context"
 	"log"
+	"regexp"
 	"strings"
 
 	"github.com/script-hub-org/script-hub/internal/config"
@@ -179,7 +180,9 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 				if status == 404 {
 					bodies = append(bodies, "#!error=404: Not Found")
 				} else if status == 200 {
-					bodies = append(bodies, content)
+					// Extract content from /* ... */ block comment wrapper (Rewrite-Parser.js L325)
+					extracted := extractBlockComment(content)
+					bodies = append(bodies, extracted)
 				}
 			}
 			if len(bodies) > 0 {
@@ -294,4 +297,18 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 		},
 		Status: 200,
 	}, nil
+}
+
+// extractBlockComment extracts content from a /* ... */ block comment wrapper,
+// matching Rewrite-Parser.js behavior (L325): if the body starts with a block
+// comment, return its inner content; otherwise return the body as-is.
+func extractBlockComment(body string) string {
+	re := regexp.MustCompile(`(?s)^\s*/\*.*?[\r\n]\s*\*+/`)
+	if re.MatchString(body) {
+		inner := regexp.MustCompile(`(?s)^(?:\n|\r)*/\*([\s\S]*?)(?:\r|\n)\s*\*+/`)
+		if m := inner.FindStringSubmatch(body); len(m) >= 2 {
+			return m[1]
+		}
+	}
+	return body
 }
