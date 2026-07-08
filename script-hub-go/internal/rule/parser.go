@@ -112,11 +112,13 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 	// Parse and convert rules
 	rules := p.parseRules(body, input)
 
-	// Apply include/exclude filters
-	rules = p.applyFilters(rules, input.Arguments)
-
 	// Convert to target format
 	output := p.formatOutput(rules, input.TargetApp)
+
+	// Restore commas protected in regex quantifiers {N,M} in the final output
+	output = strings.ReplaceAll(output, "t&zd;", ",")
+	// Collapse the JS-style excluded marker spacing that may survive in output
+	output = strings.ReplaceAll(output, " ;#", " #")
 
 	return ParseOutput{
 		Content: output,
@@ -140,42 +142,63 @@ func (p *Parser) parseRules(content string, input ParseInput) []ruleLine {
 	// Regex to detect CIDR notation
 	cidrRegex := regexp.MustCompile(`[0-9]/[0-9]`)
 	cidr6Regex := regexp.MustCompile(`([0-9]|[a-fA-F]):([0-9]|[a-fA-F])`)
+	// Regex to protect commas inside regex quantifiers like {1,2}
+	commaGuardRegex := regexp.MustCompile(`(\{[0-9]+),([0-9]*\})`)
+	// Regex to strip script/complex pattern lines (lines starting with non-U)
+	scriptLineRegex := regexp.MustCompile(`^[^U].*(\[|=|{|\\|/.*\.js)`)
 
 	ipNoResolve := isTrue(input.Arguments["nore"])
-	_ = ipNoResolve
+
+	includeItems := getArgArr(input.Arguments["y"])
+	excludeItems := getArgArr(input.Arguments["x"])
 
 	for _, rawLine := range lines {
 		line := strings.TrimSpace(rawLine)
 
-		// Normalize line
+		// Normalize line — mirrors JS preprocessing order
 		line = regexp.MustCompile(`^payload:`).ReplaceAllString(line, "")
 		line = regexp.MustCompile(`^ *(#|;|//)`).ReplaceAllString(line, "#")
 		line = regexp.MustCompile(`^ *- *`).ReplaceAllString(line, "")
 		line = commentRegex.ReplaceAllString(line, "$1")
+		// Protect commas inside {N,M} quantifiers before any comma-based split
+		line = commaGuardRegex.ReplaceAllString(line, "${1}t&zd;${2}")
+		// Drop script/complex pattern lines (matches JS regex; only affects non-U lines)
+		line = scriptLineRegex.ReplaceAllString(line, "")
 		line = strings.ReplaceAll(line, "'", "")
 		line = strings.ReplaceAll(line, `"`, "")
 
-		// Convert shorthand prefixes
-		if strings.HasPrefix(line, ".") || strings.HasPrefix(line, "*") || strings.HasPrefix(line, "+") {
-			if len(line) > 1 && line[1] == '.' {
-				line = "DOMAIN-SUFFIX," + line[2:]
-			} else {
-				line = "DOMAIN-SUFFIX," + line
+		// Convert shorthand prefixes: consume the prefix char plus an optional leading dot
+		line = regexp.MustCompile(`^(\.|\*|\+)\.?`).ReplaceAllString(line, "DOMAIN-SUFFIX,")
+
+		// Include (y): strip leading comment mark when keyword matches the whole line
+		if includeItems != nil {
+			for _, item := range includeItems {
+				if strings.Contains(line, item) {
+					line = strings.TrimPrefix(line, "#")
+				}
+			}
+		}
+		// Exclude (x): mark line as excluded with ;# prefix when keyword matches
+		if excludeItems != nil {
+			for _, item := range excludeItems {
+				if strings.Contains(line, item) {
+					line = ";#" + line
+				}
 			}
 		}
 
+		// ipNoResolve: append ,no-resolve only when nore=true and rule is ip-cidr/ip-cidr6
+		if ipNoResolve {
+			if regexp.MustCompile(`^ip6?-[ca]`).MatchString(strings.ToLower(line)) {
+				line = line + ",no-resolve"
+			}
+		}
+
+		// Now drop comment lines (after y may have uncommented them)
+		line = regexp.MustCompile(`^#.+`).ReplaceAllString(line, "")
+
 		// Skip empty lines and section headers
 		if line == "" || strings.HasPrefix(line, "[") {
-			continue
-		}
-
-		// Skip comment lines
-		if strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		// Skip lines with scripts or complex patterns
-		if matched, _ := regexp.MatchString(`^[^U].*(\[|=|{|\\|/.*\.js)`, line); matched && !strings.Contains(line, ",") {
 			continue
 		}
 
@@ -191,7 +214,7 @@ func (p *Parser) parseRules(content string, input ParseInput) []ruleLine {
 		}
 
 		// Parse the rule
-		rl := p.parseRuleLine(line, ipNoResolve, input)
+		rl := p.parseRuleLine(line, input)
 		if rl != nil {
 			rules = append(rules, *rl)
 		}
@@ -201,8 +224,24 @@ func (p *Parser) parseRules(content string, input ParseInput) []ruleLine {
 }
 
 // parseRuleLine parses a single rule line into a ruleLine struct.
-func (p *Parser) parseRuleLine(line string, ipNoResolve bool, input ParseInput) *ruleLine {
-	rl := &ruleLine{Raw: line}
+func (p *Parser) parseRuleLine(line string, input ParseInput) *ruleLine {
+	// Detect excluded lines (marked with ;# prefix during preprocessing)
+	excluded := false
+	if strings.HasPrefix(line, ";#") {
+		excluded = true
+		line = strings.TrimPrefix(line, ";#")
+	}
+
+	rl := &ruleLine{Raw: line, Excluded: excluded}
+
+	// Logical rules (OR/AND/NOT) are emitted verbatim, no further parsing
+	upperFirst := strings.ToUpper(line)
+	if strings.HasPrefix(upperFirst, "OR") || strings.HasPrefix(upperFirst, "AND") || strings.HasPrefix(upperFirst, "NOT") {
+		rl.RuleType = upperFirst
+		rl.Value = strings.ReplaceAll(line, "t&zd;", ",")
+		rl.Raw = rl.Value
+		return rl
+	}
 
 	parts := strings.SplitN(line, ",", 3)
 	if len(parts) < 2 {
@@ -210,27 +249,20 @@ func (p *Parser) parseRuleLine(line string, ipNoResolve bool, input ParseInput) 
 	}
 
 	ruleType := strings.TrimSpace(parts[0])
-	ruleValue := strings.TrimSpace(parts[1])
+	// Restore commas protected in regex quantifiers {N,M} after the split
+	ruleValue := strings.ReplaceAll(strings.TrimSpace(parts[1]), "t&zd;", ",")
+	// Third field (flags/policy) may also carry protected commas
+	third := ""
+	if len(parts) >= 3 {
+		third = strings.ReplaceAll(strings.TrimSpace(parts[2]), "t&zd;", ",")
+	}
 
-	// Check for no-resolve flag
+	// Check for no-resolve flag carried in the line
 	noResolve := false
 	if len(parts) >= 3 {
-		flags := strings.ToLower(parts[2])
+		flags := strings.ToLower(third)
 		if strings.Contains(flags, "no-resolve") {
 			noResolve = true
-		}
-	}
-
-	// Apply IP no-resolve setting — enabled by default for all IP-related rule types
-	ipRulePrefixes := []string{
-		"IP-CIDR", "IP-CIDR6", "IP-ASN", "GEOIP", "IP-SUFFIX",
-		"SRC-GEOIP", "SRC-IP-ASN", "SRC-IP-CIDR", "SRC-IP-SUFFIX",
-	}
-	ruleTypeUpper := strings.ToUpper(ruleType)
-	for _, prefix := range ipRulePrefixes {
-		if strings.HasPrefix(ruleTypeUpper, prefix) {
-			noResolve = true
-			break
 		}
 	}
 
@@ -241,31 +273,23 @@ func (p *Parser) parseRuleLine(line string, ipNoResolve bool, input ParseInput) 
 	rl.Value = ruleValue
 	rl.NoResolve = noResolve
 
-	// Check for unsupported types for certain platforms
-	unsupportedTypes := map[string]bool{
-		"HOST-WILDCARD": true,
-		"HOST":          true,
-	}
-	if unsupportedTypes[strings.ToUpper(ruleType)] {
-		rl.Unsupported = true
-	}
-
-	// Check for SNI sniffing
+	// SNI sniffing: matches the whole line, skip ip-cidr/ip-cidr6 rules
 	sni := input.Arguments["sni"]
 	if sni != "" {
-		sniItems := strings.Split(sni, "+")
-		for _, item := range sniItems {
-			if strings.Contains(ruleValue, item) && !strings.HasPrefix(strings.ToUpper(ruleType), "IP-CIDR") {
-				rl.ExtMatch = ",extended-matching"
+		isIPRule := regexp.MustCompile(`^ip6?-[ca]`).MatchString(strings.ToLower(line))
+		if !isIPRule {
+			for _, item := range getArgArr(sni) {
+				if strings.Contains(line, item) {
+					rl.ExtMatch = ",extended-matching"
+				}
 			}
 		}
 	}
 
 	pm := input.Arguments["pm"]
 	if pm != "" {
-		pmItems := strings.Split(pm, "+")
-		for _, item := range pmItems {
-			if strings.Contains(ruleValue, item) {
+		for _, item := range getArgArr(pm) {
+			if strings.Contains(line, item) {
 				if rl.ExtMatch != "" {
 					rl.ExtMatch += ",pre-matching"
 				} else {
@@ -279,7 +303,6 @@ func (p *Parser) parseRuleLine(line string, ipNoResolve bool, input ParseInput) 
 	if policy != "" {
 		hasPolicy := false
 		if len(parts) >= 3 {
-			third := strings.TrimSpace(parts[2])
 			thirdLower := strings.ToLower(third)
 			if thirdLower != "" && thirdLower != "no-resolve" &&
 				!strings.Contains(thirdLower, "extended-matching") &&
@@ -293,32 +316,6 @@ func (p *Parser) parseRuleLine(line string, ipNoResolve bool, input ParseInput) 
 	}
 
 	return rl
-}
-
-// applyFilters applies include/exclude filters to rules.
-func (p *Parser) applyFilters(rules []ruleLine, args map[string]string) []ruleLine {
-	includeItems := getArgArr(args["y"])
-	excludeItems := getArgArr(args["x"])
-
-	for i := range rules {
-		// Include (uncomment)
-		if includeItems != nil {
-			for _, item := range includeItems {
-				if strings.Contains(rules[i].Value, item) {
-					rules[i].Excluded = false
-				}
-			}
-		}
-		// Exclude (comment out)
-		if excludeItems != nil {
-			for _, item := range excludeItems {
-				if strings.Contains(rules[i].Value, item) {
-					rules[i].Excluded = true
-				}
-			}
-		}
-	}
-	return rules
 }
 
 // formatOutput formats the parsed rules for the target platform.
@@ -335,12 +332,30 @@ func (p *Parser) formatOutput(rules []ruleLine, targetApp string) string {
 	isDomainSet2 := strings.HasSuffix(target, "2")
 
 	for _, rl := range rules {
-		if rl.Unsupported {
-			otherRules = append(otherRules, rl.Raw)
+		// Excluded lines: emit the original line verbatim (matches JS outRules behavior),
+		// normalizing HO-ST prefixes back to HOST for display.
+		if rl.Excluded {
+			excludedRules = append(excludedRules, hoStToHost(rl.Raw))
 			continue
 		}
-		if rl.Excluded {
-			excludedRules = append(excludedRules, formatRuleLine(rl, "surge"))
+
+		// Logical rules (OR/AND/NOT) and unsupported types are platform-dependent
+		rt := strings.ToUpper(rl.RuleType)
+		isLogical := rt == "OR" || rt == "AND" || rt == "NOT"
+		if isLogical {
+			if isStash || isLoon {
+				// Stash/Loon do not support logical rules → other
+				otherRules = append(otherRules, hoStToHost(rl.Value))
+				continue
+			}
+			// Surge/Shadowrocket: emit verbatim
+			ruleSet = append(ruleSet, rl.Value)
+			continue
+		}
+
+		// Per-target unsupported type detection (matches JS regex sets)
+		if isUnsupportedForTarget(rt, isStash, isLoon, isSurge) {
+			otherRules = append(otherRules, hoStToHost(rl.Raw))
 			continue
 		}
 
@@ -546,8 +561,8 @@ func formatStashRule(rl ruleLine) string {
 func normalizeRuleType(ruleType string) string {
 	rt := strings.ToUpper(strings.TrimSpace(ruleType))
 	replacements := map[string]string{
-		"IP6-CIDR":    "IP-CIDR6",
-		"DEST-PORT":   "DST-PORT",
+		"IP6-CIDR":      "IP-CIDR6",
+		"DEST-PORT":     "DST-PORT",
 		"HOST-WILDCARD": "HO-ST-WILDCARD",
 	}
 	if repl, ok := replacements[rt]; ok {
@@ -558,6 +573,30 @@ func normalizeRuleType(ruleType string) string {
 		return "DOMAIN"
 	}
 	return rt
+}
+
+// isUnsupportedForTarget reports whether a rule type is unsupported on the
+// target platform, mirroring the JS per-target regex sets.
+func isUnsupportedForTarget(rt string, isStash, isLoon, isSurge bool) bool {
+	if isStash {
+		// ^(HO-ST|U|PROTOCOL|OR|AND|NOT)
+		return strings.HasPrefix(rt, "HO-ST") || strings.HasPrefix(rt, "U") ||
+			rt == "PROTOCOL" || rt == "OR" || rt == "AND" || rt == "NOT"
+	}
+	if isLoon {
+		// ^(HO-ST|DST-PORT|PROTOCOL|PROCESS-NAME|OR|AND|NOT)
+		return strings.HasPrefix(rt, "HO-ST") || rt == "DST-PORT" ||
+			rt == "PROTOCOL" || strings.HasPrefix(rt, "PROCESS-NAME") ||
+			rt == "OR" || rt == "AND" || rt == "NOT"
+	}
+	// Surge / Shadowrocket: ^(HO-ST)
+	return strings.HasPrefix(rt, "HO-ST")
+}
+
+// hoStToHost restores HO-ST prefixes (from HOST-WILDCARD normalization) back
+// to HOST for display in "other"/excluded output, matching JS behavior.
+func hoStToHost(s string) string {
+	return regexp.MustCompile(`(?i)^HO-ST`).ReplaceAllString(s, "HOST")
 }
 
 // Helper functions
