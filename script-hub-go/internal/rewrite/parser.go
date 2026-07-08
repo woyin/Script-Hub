@@ -58,6 +58,10 @@ const (
 	RewriteTypeBodyRewrite
 	RewriteTypeScript
 	RewriteTypeHeaderRewrite
+	RewriteTypeHeaderDel
+	RewriteTypeHeaderAdd
+	RewriteTypeHeaderReplace
+	RewriteTypeHeaderReplaceRegex
 	RewriteTypeURLRewrite
 	RewriteTypeMapLocal
 )

@@ -1124,11 +1124,81 @@ func parseLoonRewriteLine(line string) *ParsedRewrite {
 		}
 	case strings.HasPrefix(rwType, "url-reject"):
 		rw.Type = RewriteTypeReject
+	case strings.HasSuffix(rwType, "header-del") || strings.HasSuffix(rwType, "header-add") ||
+		strings.HasSuffix(rwType, "header-replace") || strings.HasSuffix(rwType, "header-replace-regex"):
+		// Loon: url-request-header-del / url-response-header-add / etc.
+		return parseLoonHeaderActionLine(line, parts)
 	default:
 		rw.Type = RewriteTypeURLRewrite
 		if len(parts) >= 2 {
 			rw.Replacement = strings.Join(parts[1:], " ")
 		}
+	}
+	return &rw
+}
+
+// parseLoonHeaderActionLine parses a Loon header-del/add/replace/replace-regex line.
+// Loon format: ^pattern url-(request|response)-header-(del|add|replace|replace-regex) key [value]
+// Returns multiple ParsedRewrite entries (one per key-value pair), or a single one.
+func parseLoonHeaderActionLine(line string, parts []string) *ParsedRewrite {
+	if len(parts) < 3 {
+		return nil
+	}
+	rw := ParsedRewrite{Pattern: parts[0]}
+	rwType := parts[1]
+
+	// Determine request/response and action
+	isResponse := strings.Contains(rwType, "response-")
+	var action string
+	switch {
+	case strings.HasSuffix(rwType, "header-del"):
+		action = "header-del"
+		rw.Type = RewriteTypeHeaderDel
+	case strings.HasSuffix(rwType, "header-add"):
+		action = "header-add"
+		rw.Type = RewriteTypeHeaderAdd
+	case strings.HasSuffix(rwType, "header-replace-regex"):
+		action = "header-replace-regex"
+		rw.Type = RewriteTypeHeaderReplaceRegex
+	case strings.HasSuffix(rwType, "header-replace"):
+		action = "header-replace"
+		rw.Type = RewriteTypeHeaderReplace
+	}
+
+	prefix := "http-request"
+	if isResponse {
+		prefix = "http-response"
+	}
+
+	// Build the Surge-style header rewrite line
+	suffix := strings.Join(parts[2:], " ")
+	var headerEntries []string
+	suffixParts := strings.Fields(suffix)
+
+	switch action {
+	case "header-del":
+		for _, key := range suffixParts {
+			headerEntries = append(headerEntries, fmt.Sprintf("%s %s %s", prefix, action, "'"+key+"'"))
+		}
+	case "header-add", "header-replace":
+		for i := 0; i+1 < len(suffixParts); i += 2 {
+			key := suffixParts[i]
+			val := suffixParts[i+1]
+			headerEntries = append(headerEntries, fmt.Sprintf("%s %s '%s' '%s'", prefix, action, key, val))
+		}
+	case "header-replace-regex":
+		for i := 0; i+2 < len(suffixParts); i += 3 {
+			key := suffixParts[i]
+			pattern := suffixParts[i+1]
+			replacement := suffixParts[i+2]
+			headerEntries = append(headerEntries, fmt.Sprintf("%s %s '%s' '%s' '%s'", prefix, action, key, pattern, replacement))
+		}
+	}
+
+	// Store as a header rewrite with reconstructed line(s)
+	if len(headerEntries) > 0 {
+		rw.Replacement = strings.Join(headerEntries, "\n")
+		rw.Type = RewriteTypeHeaderRewrite
 	}
 	return &rw
 }
