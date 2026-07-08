@@ -174,3 +174,8 @@ tempCodeRunnerFile.js
 
 10010*.txt
 *cookie.txt
+############################
+# Go build output
+############################
+script-hub-go/script-hub
+script-hub-go/script-hub.exe

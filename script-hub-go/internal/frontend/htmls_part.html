@@ -1,0 +1,815 @@
+
+</script>
+  <div id="app"><a href="https://github.com/Script-Hub-Org/Script-Hub"><h1 style="margin-bottom: 0;">Script Hub</h1></a>
+      <p>重写 & 规则集转换 <small>&#9432; <a href="https://github.com/Script-Hub-Org/Script-Hub/wiki" target="_blank">查看文档</a></small></p>
+
+      <div style=" margin-top: 30px;">
+      <!--<code>输入类型:</code> -->
+        <span style="position: relative; top: -9px;" v-for="item in inputTypes">
+            <input type="radio" :id="'input-type-' + item.value" :value="item.value" v-model.lazy="inputType" :disabled="item.disabled"/>
+            <label :for="'input-type-' + item.value" class="radio-label">{{item.label}}</label>
+        </span>
+        <textarea ref="textTextarea" @input="autoResize('textTextarea')" v-if=" inputType === 'local-text' " style=" position: relative; top: 4px; " id="localtext" v-model.lazy="localtext" placeholder="请填写本地文件内容"></textarea>
+        <textarea ref="textTextarea" @input="autoResize('textTextarea')" v-else style=" position: relative; top: 4px; " id="src" v-model.lazy="src" placeholder="请填写来源 URL 链接(多个 URL 用 😂 连接)"></textarea>
+      </div>
+      <!--font-size: 16px;  style=" position: relative; top: -3px; "-->
+      <small style=" position: relative; top: 7px; ">&nbsp;&#9432; <a href="https://github.com/Script-Hub-Org/Script-Hub/wiki/%E6%88%91%E5%BA%94%E8%AF%A5%E6%80%8E%E4%B9%88%E9%80%89%E6%8B%A9%E6%9D%A5%E6%BA%90%E7%B1%BB%E5%9E%8B%E5%92%8C%E7%9B%AE%E6%A0%87%E7%B1%BB%E5%9E%8B" target="_blank">如何选择类型</a></small>
+      <div class="flex-container">
+      <div style="white-space: nowrap;">
+      
+        <code>&nbsp;来源类型: </code>
+        <div v-for="item in types">
+            <input type="radio" :id="'type-' + item.value" :value="item.value" v-model.lazy="type" :disabled="item.disabled"/>
+            <label :for="'type-' + item.value" class="radio-label">{{item.label}}</label>
+        </div>
+
+      </div>
+
+      <div>
+        <code>&nbsp;目标类型: </code>
+        <template v-for="item in targets">
+          <div v-if="type === 'rule-set' ? (item.value.endsWith('rule-set') || item.value.includes('domain-set')) : ( (item.value.endsWith('-rule-set')||item.value.includes('domain-set')) ? false : ( type.endsWith('-script') ? item.value.endsWith('-script') : !item.value.endsWith('-script') ) ) ">
+            <input type="radio" :id="'target-' + item.value" :value="item.value" v-model.lazy="target" :disabled="item.disabled || (type.endsWith('-script') && !item.value.endsWith('-script')) || (type === 'rule-set' && (!item.value.endsWith('rule-set') && !item.value.includes('domain-set'))) || (type === 'plain-text' && item.value !== 'plain-text') " />
+            <label :for="'target-' + item.value" class="radio-label">{{item.label}}</label>
+          </div>
+        </template>
+      </div>
+    </div>
+    <br/>
+
+    <details v-if="!target || type === 'qx-script' || target.endsWith('-script')">
+      <summary>
+      QX 专属脚本说明：
+      <br/>
+      你一般<code>不需要用它</code>, 因为这是 <code>脚本转脚本</code>
+      <br/>
+      通常情况下, 你需要的是 <code>QX 重写 转换到 模块/覆写/插件</code>
+      <br/>
+      专属脚本转换的使用场景:
+      <br/>
+      你想在你的模块/覆写/插件中, 单独引用一条转换的 QX 专属脚本
+      </summary>
+      <span>
+      <!--无-->
+      </span>
+      
+    </details>
+
+    <!-- position: fixed; -->
+    <div style="padding: 1rem;bottom: 0rem;margin-right: 0rem;background-color: var(--kbg);/* border: 1px solid var(--border); */border-radius: var(--standard-border-radius);">
+        <span v-if="result" style="color: red">请勿打开链接之后复制浏览器地址栏的链接 浏览器地址栏中的链接可能未编码 可能会导致导入参数异常</span><br/><span v-if="src && src.includes('.lpx')" style="color: red">⚠️ 你填入的可能是 Loon 加密的私有插件(.lpx) Script Hub 无法处理</span><br/>
+        <a v-if="result" :href="result" target="_blank" style="margin: 0 0.5rem 0 0">打开链接</a>
+        <a v-if="previewResult" :href="previewResult" target="_blank" style="margin: 0 0.5rem 0 0">预览结果</a>
+        <a v-if="result && target === 'shadowrocket-module' " :href=" 'https://api.boxjs.app/shadowrocket/install?module=' + encodeURIComponent(result) " target="_blank" style="margin: 0 0.5rem 0 0">导入(Shadowrocket)</a>
+        <a v-if="result && target === 'loon-plugin' " :href=" 'https://www.nsloon.com/openloon/import?plugin=' + encodeURIComponent(result) " target="_blank" style="margin: 0 0.5rem 0 0">导入(Loon)</a>
+        <a v-if="result && target === 'stash-stoverride' " :href=" 'stash://install-override?url=' + encodeURIComponent(result) " target="_blank" style="margin: 0 0.5rem 0 0">导入(Stash)</a>
+        <template v-if="result && target === 'surge-module' ">
+          <a :href=" 'surge:///install-module?url=' + encodeURIComponent(result) + '&name=' + encodeURIComponent(filename) " target="_blank" style="margin: 0 0.5rem 0 0">导入 Surge(远程模块)</a>
+          <a :href=" 'scriptable:///run/SurgeModuleTool?url=' + encodeURIComponent(result) + '&name=' + encodeURIComponent(filename) " target="_blank" style="margin: 0 0.5rem 0 0">导入 Surge(本地模块 需配合 Scriptable)</a>
+          <small>&#9432; <a href="https://github.com/Script-Hub-Org/Script-Hub/wiki/%E7%9B%B8%E5%85%B3%E7%94%9F%E6%80%81:-Surge-%E6%A8%A1%E5%9D%97%E5%B7%A5%E5%85%B7" target="_blank">如何配合 Scriptable 导入</a></small>
+          <a :href=" 'egern:///modules/new?url=' + encodeURIComponent(result) + '&name=' + encodeURIComponent(filename) " target="_blank" style="margin: 0 0.5rem 0 0">导入 Egern(远程模块)</a>
+        </template>
+        <template v-if="result">
+          <br/>
+          <small>&#9432; 将此链接中的 <code>file</code> 或 <code>convert</code> 改为 <code>edit</code> 即可在浏览器中再次对当前内容进行编辑</small>
+        </template>
+        <textarea v-if="frontendConvert" id="frontendConvertResult" :value="frontendConvertResult" placeholder="结果" readonly></textarea>
+        <textarea v-else id="result" :value="result" placeholder="结果(请输入来源链接并选择类型)" readonly></textarea>
+        <div>
+          <input type="checkbox" id="frontendConvert" v-model.lazy="frontendConvert" :disabled="frontendConvertDisabled"/>
+          <label class="button-over" for="frontendConvert">开启纯前端转换</label>
+          <br/>
+          <small>使用限制: 1. 使用网页部署前端 2. 使用 <code>本地文本内容</code> 3. 转换类型为 <code>重写/模块/覆写/插件 </code> 4. 不会进行内部的 <code>脚本转换</code> 5. 不会进行网络请求 例: 无法使用 <code>可莉图标订阅</code> 但是可以使用完整图标文件链接</small>
+        </div>
+        <button v-if="copyInfo">{{copyInfo}}</button>
+        <button v-else @click="copy" :disabled="!result">复制</button>
+            <!-- <button v-else @click="copy">全选{{isHttps ? "&复制" : ""}}</button> -->
+            <!-- <small v-if="!isHttps"> https://script.hub 可复制</small> -->
+            &nbsp;&nbsp;
+            <button v-if="resetInfo">{{resetInfo}}</button>
+            <button v-else @click="reset">重置</button>
+      </div>
+      <br/>
+
+      <template v-if="!target || !type || (!target.endsWith('rule-set') && !target.includes('domain-set') && !target.endsWith('-script') && target !== 'plain-text' )">
+        <small style=" position: relative; top: -4px;">&nbsp;&#9432; <a href="https://github.com/Script-Hub-Org/Script-Hub/wiki/%E6%88%91%E5%BA%94%E8%AF%A5%E6%80%8E%E4%B9%88%E9%80%89%E6%8B%A9%E6%9D%A5%E6%BA%90%E7%B1%BB%E5%9E%8B%E5%92%8C%E7%9B%AE%E6%A0%87%E7%B1%BB%E5%9E%8B#%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E8%A6%81%E5%BC%80%E5%90%AF%E8%84%9A%E6%9C%AC%E8%BD%AC%E6%8D%A2" target="_blank">什么时候应该启用脚本转换</a></small>
+        <details>
+          <summary>启用脚本转换</summary>
+          <small> &#9432; <a href="https://github.com/Script-Hub-Org/Script-Hub/wiki/%E6%88%91%E5%BA%94%E8%AF%A5%E6%80%8E%E4%B9%88%E9%80%89%E6%8B%A9%E6%9D%A5%E6%BA%90%E7%B1%BB%E5%9E%8B%E5%92%8C%E7%9B%AE%E6%A0%87%E7%B1%BB%E5%9E%8B#%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E8%A6%81%E5%BC%80%E5%90%AF%E8%84%9A%E6%9C%AC%E8%BD%AC%E6%8D%A2" target="_blank">脚本转换 1 和 2 怎么选</a></small>
+          <details>
+            <summary>启用脚本转换 1</summary>
+            <span>根据关键词为脚本启用脚本转换(多关键词以 <code>+</code> 分隔，主要用途 将使用了QX独有api的脚本转换为通用脚本，谨慎开启，大部分脚本本身就通用，无差别启用，只会徒增功耗)</span>
+            <textarea id="jsc" v-model.lazy="jsc" placeholder=""></textarea>
+            <div>
+              <input type="checkbox" id="jsc_all" v-model.lazy="jsc_all" />
+              <label for="jsc_all">全部转换</label>
+            </div>
+            <div>
+              <input type="checkbox" id="compatibilityOnly" v-model.lazy="compatibilityOnly" />
+              <label class="button-over" for="compatibilityOnly">仅进行兼容性转换<small style=" position: relative; top: -4px;">&nbsp;&#9432; <a href="https://github.com/Script-Hub-Org/Script-Hub/wiki/%E6%88%91%E5%BA%94%E8%AF%A5%E6%80%8E%E4%B9%88%E9%80%89%E6%8B%A9%E6%9D%A5%E6%BA%90%E7%B1%BB%E5%9E%8B%E5%92%8C%E7%9B%AE%E6%A0%87%E7%B1%BB%E5%9E%8B#%E4%BB%80%E4%B9%88%E6%98%AF-%E4%BB%85%E8%BF%9B%E8%A1%8C%E5%85%BC%E5%AE%B9%E6%80%A7%E8%BD%AC%E6%8D%A2" target="_blank">什么是 <code>仅进行兼容性转换</code></a></small></label>
+            </div>
+            <details>
+              <summary>在脚本开头添加代码</summary>
+              <span>下面的代码会添加到被转换的脚本的开头 可用于更复杂的操作</span>
+              <textarea id="prepend" v-model.lazy="prepend" placeholder="console.log(new Date().toLocaleString('zh'))"></textarea>
+            </details>
+            <details>
+              <summary>高级操作(使用代码处理脚本的内容)</summary>
+              <details>
+                <summary>处理原始内容(代码)</summary>
+                <span>使用 <code>eval</code> 执行, 内容变量为 <code>body</code></span>
+                <textarea id="evJsori" v-model.lazy="evJsori" placeholder="body = body.replace(/ffffoooooo/gi, 'bbbaaarrr')"></textarea>
+              </details>
+
+              <details>
+                <summary>处理转换后的内容(代码)</summary>
+                <span>使用 <code>eval</code> 执行, 内容变量为 <code>body</code></span>
+                <textarea id="evJsmodi" v-model.lazy="evJsmodi" placeholder="body = body.replace(/ffffoooooo/gi, 'bbbaaarrr')"></textarea>
+              </details>
+              
+              <details>
+                <summary>处理原始内容(链接)</summary>
+                <span>使用 <code>eval</code> 执行, 内容变量为 <code>body</code></span>
+                <textarea id="evUrlori" v-model.lazy="evUrlori" placeholder="URL 链接"></textarea>
+              </details>
+
+              <details>
+                <summary>处理转换后的内容(链接)</summary>
+                <span>使用 <code>eval</code> 执行, 内容变量为 <code>body</code></span>
+                <textarea id="evUrlmodi" v-model.lazy="evUrlmodi" placeholder="URL 链接"></textarea>
+              </details>
+            </details>
+          </details>
+
+          <details>
+            <summary>启用脚本转换 2</summary>
+            <span>根据关键词为脚本启用脚本转换(与 <code>启用脚本转换 1</code> 的区别: 总是会在 <code>$done</code><code>(body)</code> 里包一个response)</span>
+            <textarea id="jsc2" v-model.lazy="jsc2" placeholder=""></textarea>
+            <div>
+              <input type="checkbox" id="jsc2_all" v-model.lazy="jsc2_all" />
+              <label for="jsc2_all">全部转换</label>
+            </div>
+            <div>
+              <input type="checkbox" id="compatibilityOnly" v-model.lazy="compatibilityOnly" />
+              <label class="button-over" for="compatibilityOnly">仅进行兼容性转换<small style=" position: relative; top: -4px;">&nbsp;&#9432; <a href="https://github.com/Script-Hub-Org/Script-Hub/wiki/%E6%88%91%E5%BA%94%E8%AF%A5%E6%80%8E%E4%B9%88%E9%80%89%E6%8B%A9%E6%9D%A5%E6%BA%90%E7%B1%BB%E5%9E%8B%E5%92%8C%E7%9B%AE%E6%A0%87%E7%B1%BB%E5%9E%8B#%E4%BB%80%E4%B9%88%E6%98%AF-%E4%BB%85%E8%BF%9B%E8%A1%8C%E5%85%BC%E5%AE%B9%E6%80%A7%E8%BD%AC%E6%8D%A2" target="_blank">什么是 <code>仅进行兼容性转换</code></a></small></label>
+            </div>
+            <details>
+              <summary>在脚本开头添加代码</summary>
+              <span>下面的代码会添加到被转换的脚本的开头 可用于更复杂的操作</span>
+              <textarea id="prepend" v-model.lazy="prepend" placeholder="console.log(new Date().toLocaleString('zh'))"></textarea>
+            </details>
+            <details>
+              <summary>高级操作(使用代码处理脚本的内容)</summary>
+              <details>
+                <summary>处理原始内容(代码)</summary>
+                <span>使用 <code>eval</code> 执行, 内容变量为 <code>body</code></span>
+                <textarea id="evJsori" v-model.lazy="evJsori" placeholder="body = body.replace(/ffffoooooo/gi, 'bbbaaarrr')"></textarea>
+              </details>
+
+              <details>
+                <summary>处理转换后的内容(代码)</summary>
+                <span>使用 <code>eval</code> 执行, 内容变量为 <code>body</code></span>
+                <textarea id="evJsmodi" v-model.lazy="evJsmodi" placeholder="body = body.replace(/ffffoooooo/gi, 'bbbaaarrr')"></textarea>
+              </details>
+              
+              <details>
+                <summary>处理原始内容(链接)</summary>
+                <span>使用 <code>eval</code> 执行, 内容变量为 <code>body</code></span>
+                <textarea id="evUrlori" v-model.lazy="evUrlori" placeholder="URL 链接"></textarea>
+              </details>
+
+              <details>
+                <summary>处理转换后的内容(链接)</summary>
+                <span>使用 <code>eval</code> 执行, 内容变量为 <code>body</code></span>
+                <textarea id="evUrlmodi" v-model.lazy="evUrlmodi" placeholder="URL 链接"></textarea>
+              </details>
+            </details>
+          </details>
+        </details>
+      </template>
+
+      <details v-if="!target || (!target.endsWith('rule-set') && !target.includes('domain-set') && !target.endsWith('-script') && target !== 'plain-text' )">
+        <summary>名称 简介</summary>
+        <span>名字+简介 ，名字和简介以 <code>+</code> 相连，可缺省名字或简介. 名字或简介中想使用 <code>+</code> 请用 <code>➕</code> 代替</span>
+        <textarea id="n" v-model.lazy="n" placeholder=""></textarea>
+      </details>
+      
+      <details>
+        <summary>文件名(避免重名, 默认从来源取)</summary>
+        <textarea id="filename" v-model.lazy="filename" :placeholder=" target === 'plain-text' ? '当前为纯文本类型, 此处为包含后缀的完整文件名' : '不包含后缀' "></textarea>
+      </details>
+
+      <details v-if="!target || (!target.endsWith('rule-set') && !target.includes('domain-set') && !target.endsWith('-script') && target !== 'plain-text' )">
+        <summary>分类</summary>
+        <textarea id="category" v-model.lazy="category" placeholder="指定 category"></textarea>
+      </details>
+
+      <details v-if="!target || (!target.endsWith('rule-set') && !target.includes('domain-set') && !target.endsWith('-script') && target !== 'plain-text' )">
+        <summary>图标</summary>
+        <p>可指定 <a href="https://raw.githubusercontent.com/luestr/IconResource/main/KeLee_icon.json" target="_blank">可莉图标订阅</a> 里的图标名或图标链接</p>
+        <textarea id="icon" v-model.lazy="icon" placeholder="指定 icon"></textarea>
+      </details>
+
+      <details v-if="!target || (!target.endsWith('rule-set') && !target.includes('domain-set') && !target.endsWith('-script') && target !== 'plain-text' )">
+        <summary>重写相关</summary>
+
+        <details>
+          <summary>保留重写</summary>
+          <span>根据关键词保留重写(即去掉注释符#) 多关键词以 <code>+</code> 分隔</span>
+          <textarea id="y" v-model.lazy="y" placeholder=""></textarea>
+        </details>
+        <details>
+          <summary>排除重写</summary>
+          <span>根据关键词排除重写(即添加注释符#) 多关键词以 <code>+</code> 分隔</span>
+          <textarea id="x" v-model.lazy="x" placeholder=""></textarea>
+        </details>
+        <div>
+          <input type="checkbox" id="synMitm" v-model.lazy="synMitm" />
+          <label for="synMitm">将 MitM 主机名同步至 <code>force-http-engine-hosts</code></label>
+        </div>
+        <div>
+          <input type="checkbox" id="del" v-model.lazy="del" />
+          <label for="del">从转换结果中剔除被注释的重写</label>
+        </div>
+        <div class="divstyle">
+          <input type="checkbox" id="del" v-model.lazy="keepHeader" />
+          <label for="keepHeader">保留 <code>Map Local</code>/<code>echo-response</code> 中的 <code>header</code>/<code>content-type</code>(占用内存多 但响应快)</label>
+        </div>
+        <div>
+          <input type="checkbox" id="del" v-model.lazy="jsDelivr" />
+          <label for="jsDelivr">GitHub 转 jsDelivr(修复 content-type)</label>
+        </div>
+      </details>
+
+      <details v-if="!target || (target.endsWith('rule-set') || target.includes('domain-set'))">
+        <summary>规则相关</summary>
+        <details>
+          <summary>保留规则</summary>
+          <span>根据关键词保留规则(即去掉注释符#) 多关键词以 <code>+</code> 分隔</span>
+          <textarea id="y" v-model.lazy="y" placeholder=""></textarea>
+        </details>
+        <details>
+          <summary>排除规则</summary>
+          <span>根据关键词排除规则(即添加注释符#) 多关键词以 <code>+</code> 分隔</span>
+          <textarea id="x" v-model.lazy="x" placeholder=""></textarea>
+        </details>
+      </details>
+
+      <details v-if="!target || (!target.endsWith('rule-set') && !target.includes('domain-set') && !target.endsWith('-script') && target !== 'plain-text' )">
+        <summary>指定策略</summary>
+        <span>为 <code>[Rule]</code> 字段下未指定策略或指定的策略不是 app 内置策略的规则指定一个策略，如未指定将自动跳过该规则</span>
+        <textarea id="policy" v-model.lazy="policy" placeholder=""></textarea>
+      </details>
+
+
+
+      <details v-if="!target || (!target.endsWith('rule-set') && !target.includes('domain-set') && !target.endsWith('-script') && target !== 'plain-text' )">
+        <summary>修改 MitM 主机名</summary>
+        <details>
+          <summary>添加 MitM 主机名</summary>
+          <span>添加 MitM 主机名 多主机名以 <code>,</code> 分隔</span>
+          <textarea id="hnadd" v-model.lazy="hnadd" placeholder=""></textarea>
+        </details>
+
+        <details>
+          <summary>删除 MitM 主机名</summary>
+          <span>1. 从已有 MitM 主机名中删除主机名 多主机名以 <code>,</code> 分隔(需要传入完整主机名)</span>
+          <textarea id="hndel" v-model.lazy="hndel" placeholder=""></textarea>
+          <span>2. 使用 <code>正则表达式</code> 从已有 MitM 主机名中删除主机名</span>
+          <textarea id="hnregdel" v-model.lazy="hnregdel" placeholder=""></textarea>
+        </details>
+      </details>
+      
+
+      <details v-if="!target || (!target.endsWith('rule-set') && !target.includes('domain-set') && !target.endsWith('-script') && target !== 'plain-text' )">
+        <summary>修改脚本名</summary>
+        <div>请务必阅读 <a href="https://t.me/zhetengsha/1372" target="_blank">此示例</a> 学习如何使用</div>
+        <details>
+          <summary>关键词锁定脚本(njsnametarget)</summary>
+          <span>根据关键词锁定脚本, 配合参数 <code>njsname</code> 修改脚本名. 多关键词用 <code>+</code> 分隔, <code>njsnametarget</code> 传入了几项,  <code>njsname</code> 也必须对应传入几项</span>
+          <textarea id="njsnametarget" v-model.lazy="njsnametarget" placeholder=""></textarea>
+        </details>
+        <details>
+          <summary>新的脚本名(njsname)</summary>
+          <span>见 <code>njsnametarget</code> 参数说明</span>
+          <textarea id="njsname" v-model.lazy="njsname" placeholder=""></textarea>
+        </details>
+      </details>
+      <details v-if="!target || (!target.endsWith('rule-set') && !target.includes('domain-set') && !target.endsWith('-script') && target !== 'plain-text' )">
+        <summary>修改脚本超时</summary>
+        <div>请务必阅读 <a href="https://t.me/zhetengsha/1372" target="_blank">此示例</a> 学习如何使用</div>
+        <details>
+          <summary>关键词锁定脚本(timeoutt)</summary>
+          <span>根据关键词锁定脚本, 配合参数 <code>timeoutv</code> 修改脚本超时. 多关键词用 <code>+</code> 分隔, <code>timeoutt</code> 传入了几项,  <code>timeoutv</code> 也必须对应传入几项</span>
+          <textarea id="timeoutt" v-model.lazy="timeoutt" placeholder=""></textarea>
+        </details>
+        <details>
+          <summary>超时(timeoutv)</summary>
+          <span>见 <code>timeoutt</code> 参数说明</span>
+          <textarea id="timeoutv" v-model.lazy="timeoutv" placeholder=""></textarea>
+        </details>
+      </details>
+
+      <details v-if="!target || target === 'surge-module' ">
+        <summary>修改脚本引擎(Surge)</summary>
+        <div>请务必阅读 <a href="https://t.me/zhetengsha/1372" target="_blank">此示例</a> 学习如何使用</div>
+        <details>
+          <summary>关键词锁定脚本(enginet)</summary>
+          <span>根据关键词锁定脚本, 配合参数 <code>enginev</code> 修改 <a href="https://t.me/SurgeTestFlightFeed/114" target="_blank">脚本引擎</a>. 多关键词用 <code>+</code> 分隔, <code>enginet</code> 传入了几项,  <code>enginev</code> 也必须对应传入几项</span>
+          <textarea id="enginet" v-model.lazy="enginet" placeholder=""></textarea>
+        </details>
+        <details>
+          <summary>引擎(enginev)</summary>
+          <span>见 <code>enginet</code> 参数说明</span>
+          <textarea id="enginev" v-model.lazy="enginev" placeholder=""></textarea>
+        </details>
+      </details>
+
+      <details v-if="!target || (!target.endsWith('rule-set') && !target.includes('domain-set') && !target.endsWith('-script') && target !== 'plain-text' )">
+        <summary>修改定时任务</summary>
+        <div>请务必阅读 <a href="https://t.me/zhetengsha/1372" target="_blank">此示例</a> 学习如何使用</div>
+        <details>
+          <summary>关键词锁定定时任务(cron)</summary>
+          <span>根据关键词锁定 <code>cron</code> 脚本配合参数 <code>cronexp</code> 修改定时任务的cron表达式 多关键词用 <code>+</code> 分隔, <code>cron</code> 传入了几项, <code>cronexp</code> 也必须对应传入几项。 cron 表达式中空格可用 "." 替代</span>
+          <textarea id="cron" v-model.lazy="cron" placeholder=""></textarea>
+        </details>
+        <details>
+          <summary>修改定时任务(cronexp)</summary>
+          <span>见 <code>cron</code> 参数说明</span>
+          <textarea id="cronexp" v-model.lazy="cronexp" placeholder=""></textarea>
+        </details>
+      </details>
+
+
+      <details v-if="!target || (!target.endsWith('rule-set') && !target.includes('domain-set') && !target.endsWith('-script') && target !== 'plain-text' )">
+        <summary>修改参数</summary>
+        <div>请务必阅读 <a href="https://t.me/zhetengsha/1372" target="_blank">此示例</a> 学习如何使用</div>
+        <details>
+          <summary>修改参数(arg)</summary>
+          <span>arg= 根据关键词锁定脚本配合参数argv= 修改argument=的值 多关键词用 <code>+</code> 分隔，arg=传入了几项，argv=也必须对应传入几项。 argument中  <code>+</code> 必须用"t;add;"替代。</span>
+          <textarea id="arg" v-model.lazy="arg" placeholder=""></textarea>
+        </details>
+        <details>
+          <summary>修改参数(argv)</summary>
+          <span>见 arg= 参数说明</span>
+          <textarea id="argv" v-model.lazy="argv" placeholder=""></textarea>
+        </details>
+      </details>
+
+      <details v-if="!target || target === 'stash-stoverride'">
+        <summary>Stash Tiles 面板相关</summary>
+        <div>请务必阅读 <a href="https://t.me/zhetengsha/1372" target="_blank">此示例</a> 学习如何使用</div>
+        <details>
+          <summary>根据关键词锁定 Surge 的 Panel 脚本(Stash 专用参数)</summary>
+          <span>tiles= Stash专用参数，根据关键词锁定Surge的panel脚本，配合tcolor= 参数修改转换成tiles后的背景颜色，HEX码中的"#"必须用"@"替代</span>
+          <textarea id="tiles" v-model.lazy="tiles" placeholder=""></textarea>
+        </details>
+        <details>
+          <summary>Tiles 颜色(Stash 专用参数)</summary>
+          <span>tcolor= 见 tiles 参数说明 请传入8位HEX颜色代码</span>
+          <textarea id="tcolor" v-model.lazy="tcolor" placeholder=""></textarea>
+        </details>
+      </details>
+
+      <details v-if="false">
+        <summary>缓存(默认开启)</summary>
+        <span>cachexp= 设置缓存有效期，单位：小时，不传入此参数默认有效期一小时。也可以用 BoxJs 修改 <code>Parser_cache_exp</code> 的值来修改全局有效期。单位：小时，支持小数，设置为0.0001即立即过期。</span>
+        <input id="cachexp" v-model.number.lazy="cachexp" placeholder=""></input>
+        <div>
+          <input type="checkbox" id="nocache" v-model.lazy="nocache" />
+          <label for="nocache">不缓存该条链接</label>
+        </div>
+      </details>
+
+      <div>
+        <input type="checkbox" id="nore" v-model.lazy="nore" />
+        <label class="button-over" for="nore">IP 规则开启不解析域名(即 no-resolve)</label>
+      </div>
+
+      <details v-if="!target || target.startsWith('surge') ">
+        <summary>SNI 扩展匹配(extended-matching)</summary>
+        <span>根据关键词开启 Surge 的 SNI 扩展匹配(extended-matching) 多关键词以 <code>+</code> 分隔</span>
+        <textarea id="sni" v-model.lazy="sni" placeholder=""></textarea>
+      </details>
+      <details v-if="!target || target.startsWith('surge') ">
+        <summary>pre-matching</summary>
+        <span>根据关键词开启 Surge 的 pre-matching 多关键词以 <code>+</code> 分隔</span>
+        <textarea id="pm" v-model.lazy="pm" placeholder=""></textarea>
+      </details>
+      <div v-if="!target || target.startsWith('surge') ">
+        <input type="checkbox" id="jqEnabled" v-model.lazy="jqEnabled" />
+        <label class="button-over" for="jqEnabled">开启 JQ(需新版 Surge 订阅功能)</label>
+      </div>
+
+      <div v-if="!target || target.endsWith('-script') ">
+        <input type="checkbox" id="wrap_response" v-model.lazy="wrap_response" />
+        <label class="button-over" for="wrap_response">总是会在 <code>$done</code><code>(body)</code> 里包一个 response</label>
+      </div>
+
+      <div v-if="!target || target.endsWith('-script') ">
+        <input type="checkbox" id="compatibilityOnly" v-model.lazy="compatibilityOnly" />
+        <label class="button-over" for="compatibilityOnly">仅进行兼容性转换<small style=" position: relative; top: -4px;">&nbsp;&#9432; <a href="https://github.com/Script-Hub-Org/Script-Hub/wiki/%E6%88%91%E5%BA%94%E8%AF%A5%E6%80%8E%E4%B9%88%E9%80%89%E6%8B%A9%E6%9D%A5%E6%BA%90%E7%B1%BB%E5%9E%8B%E5%92%8C%E7%9B%AE%E6%A0%87%E7%B1%BB%E5%9E%8B#%E4%BB%80%E4%B9%88%E6%98%AF-%E4%BB%85%E8%BF%9B%E8%A1%8C%E5%85%BC%E5%AE%B9%E6%80%A7%E8%BD%AC%E6%8D%A2" target="_blank">什么是 <code>仅进行兼容性转换</code></a></small></label>
+      </div>
+
+
+      <details v-if="inputType !== 'local-text'">
+        <summary>自定义请求的 Headers</summary>
+        <span>格式(使用英文冒号 不要加无意义的空格): <code>Field:Value</code> 可换行输入多个. <br/>默认为 <code>User-Agent:script-hub/1.0.0</code></span>
+        <textarea id="headers" v-model.lazy="headers" placeholder="User-Agent:script-hub/1.0.0\nAuthorization:token xxx"></textarea>
+      </details>
+      <details>
+        <summary>高级操作(使用代码处理内容)</summary>
+        <details>
+          <summary>处理原始内容(代码)</summary>
+          <span>使用 <code>eval</code> 执行, 内容变量为 <code>body</code></span>
+          <textarea id="evalScriptori" v-model.lazy="evalScriptori" placeholder="body = body.replace(/ffffoooooo/gi, 'bbbaaarrr')"></textarea>
+        </details>
+
+        <details>
+          <summary>处理转换后的内容(代码)</summary>
+          <span>使用 <code>eval</code> 执行, 内容变量为 <code>body</code></span>
+          <textarea id="evalScriptmodi" v-model.lazy="evalScriptmodi" placeholder="body = body.replace(/ffffoooooo/gi, 'bbbaaarrr')"></textarea>
+        </details>
+        
+        <details>
+          <summary>处理原始内容(链接)</summary>
+          <span>使用 <code>eval</code> 执行, 内容变量为 <code>body</code></span>
+          <textarea id="evalUrlori" v-model.lazy="evalUrlori" placeholder="URL 链接"></textarea>
+        </details>
+
+        <details>
+          <summary>处理转换后的内容(链接)</summary>
+          <span>使用 <code>eval</code> 执行, 内容变量为 <code>body</code></span>
+          <textarea id="evalUrlmodi" v-model.lazy="evalUrlmodi" placeholder="URL 链接"></textarea>
+        </details>
+      </details>
+
+      <div>
+        <input type="checkbox" id="noNtf" v-model.lazy="noNtf" />
+        <label class="button-over" for="noNtf">关闭通知</label>
+      </div>
+
+
+    </div>
+    <footer>
+      <p>Made With &hearts; By <a href="https://github.com/Script-Hub-Org/Script-Hub">Script Hub v1.14.14</a></p>
+    </footer>
+    <script>
+      const openAllDetails = () => document.querySelectorAll('details').forEach(i => i.setAttribute('open', ""))
+    
+      const { createApp, ref } = Vue
+  const init = {
+    // baseUrl: location.protocol + '//script.hub/',
+    baseUrl: 'http://script.hub/',
+    inputTypes: [{value: 'remote-url', label: '来源链接'}, {value: 'local-text', label: '本地文本内容'}],
+    types: [{value: 'qx-rewrite', label: 'QX 重写'}, {value: 'surge-module', label: 'Surge 模块'}, {value: 'loon-plugin', label: 'Loon 插件'}, {value: 'rule-set', label: '规则集'}, {value: 'qx-script', label: 'QX 专属脚本'}, {value: 'plain-text', label: '纯文本'}],
+    type: 'qx-rewrite',
+    inputType: '',
+    targets: [{value: 'surge-module', label: 'Surge/Egern 模块', suffix: '.sgmodule'}, {value: 'stash-stoverride', label: 'Stash 覆写', suffix: '.stoverride'}, {value: 'shadowrocket-module', label: 'Shadowrocket 模块', suffix: '.sgmodule'}, {value: 'loon-plugin', label: 'Loon 插件', suffix: '.plugin'}, {value: 'loon-rule-set', label: '规则集(Loon)', suffix: '.list' }, {value: 'shadowrocket-rule-set', label: '规则集(Shadowrocket)', suffix: '.list' }, {value: 'surge-rule-set', label: '规则集(Surge)', suffix: '.list' }, {value: 'surge-domain-set', label: '域名集¹(Surge)', suffix: '.list' }, {value: 'surge-domain-set2', label: '无法转换为域名集¹的剩余规则集(Surge)', suffix: '.list' }, {value: 'stash-rule-set', label: '规则集(Stash)', suffix: '.list' }, {value: 'stash-domain-set', label: '域名集²(Stash)', suffix: '.list' }, {value: 'stash-domain-set2', label: '无法转换为域名集²的剩余规则集(Stash)', suffix: '.list' }, {value: 'surge-script', label: 'Surge 脚本(兼容)', suffix: '.js'}, {value: 'plain-text', label: '纯文本'}],
+    target: '',
+    src: '',
+    headers: '',
+    localtext: '',
+    n: '',
+    filename: '',
+    category: '',
+    icon: '',
+    y: '',
+    x: '',
+    del: true,
+    hnadd: '',
+    hndel: '',
+    hnregdel: '',
+    jsc: '',
+    jsc_all: '',
+    jsc2: '',
+    jsc2_all: '',
+    cron: '',
+    cronexp: '',
+    njsname: '',
+    njsnametarget: '',
+    timeoutt: '',
+    timeoutv: '',
+    enginet: '',
+    enginev: '',
+    policy: '',
+    arg: '',
+    argv: '',
+    tiles: '',
+    tcolor: '',
+    cachexp: '',
+    nocache: '',
+    copyInfo: '',
+    resetInfo: '',
+    evalScriptori: '',
+    evalScriptmodi: '',
+    evalUrlori: '',
+    evalUrlmodi: '',
+    evJsori: '',
+    evJsmodi: '',
+    evUrlori: '',
+    evUrlmodi: '',
+    prepend: '',
+    frontendConvertResult: '',
+    keepHeader: false,
+    nore: false,
+    synMitm: false,
+    noNtf: false,
+    jqEnabled: true,
+    frontendConvert: false,
+    sni: '',
+    pm: '',
+    wrap_response: false,
+    jsDelivr: false,
+    compatibilityOnly: false,
+    env: "${$.getEnv() || ''}",
+    editMode: false,
+  }
+  
+  if (init.env === 'Surge') {
+    init.target = 'surge-module'
+  } else if (init.env === 'Loon') {
+    init.target = 'loon-plugin'
+  } else if (init.env === 'Stash') {
+    init.target = 'stash-stoverride'
+  } else if (init.env === 'Shadowrocket') {
+    init.target = 'shadowrocket-module'
+  }
+
+  const params = [ 'headers', 'n', 'type', 'target', 'x', 'y', 'hnadd', 'hndel', 'hnregdel', 'jsc', 'jsc2', 'cron', 'cronexp', 'njsname', 'njsnametarget', 'timeoutt', 'timeoutv', 'enginet', 'enginev', 'policy', 'arg', 'argv', 'tiles', 'tcolor', 'cachexp', 'nocache', 'del', 'nore', 'synMitm', 'noNtf','jqEnabled', 'wrap_response', 'compatibilityOnly', 'evalScriptori', 'evalScriptmodi', 'evalUrlmodi', 'evalUrlori', 'evJsori', 'evJsmodi', 'evUrlori', 'evUrlmodi','prepend', 'keepHeader', 'jsDelivr', 'sni', 'pm', 'localtext', 'icon', 'category']
+  
+  init.editMode = location.pathname.indexOf('/edit') === 0
+
+  const href = location.href;
+  
+  
+  const startStr = href.split('/edit/_start_/')[1]
+  if(startStr) {
+    const endArray = startStr.split('/_end_/')
+    if (endArray) {
+      const src = endArray[0]
+      if(src) {
+        init.src = decodeURIComponent(src)
+      }
+      const filenameStr = endArray[1]
+      if(filenameStr) {
+        const fullnameArray = filenameStr.split('?')
+        if (fullnameArray) {
+          const fullname = fullnameArray[0]
+          if(fullname) {
+            init.filename = decodeURIComponent(fullname.substring(0, fullname.lastIndexOf('.')))
+          }
+          const searchStr = filenameStr.substring(filenameStr.lastIndexOf('?')+1)
+          if (searchStr) {
+            const urlParams = new URLSearchParams("?" + searchStr);
+
+            params.forEach(i => {
+              const param = urlParams.get(i)
+
+              if (param != null && param !== '' && param !== false) {
+                if (i === 'jsc' && param === '.') {
+                  init.jsc_all = true
+                } else if (i === 'jsc2' && param === '.') {
+                  init.jsc2_all = true
+                } else {
+                  init[i] = param
+                }
+                
+              }
+            })
+          }
+          if(fullname && init.target === 'plain-text') {
+            init.filename = fullname
+          }
+          
+        }
+      }
+    }
+  }
+
+  if (init.localtext) {
+    init.inputType = 'local-text'
+  } else {
+    init.inputType = 'remote-url'
+  }
+
+  console.log("init", init)
+
+  const envDom = document.createElement("small");
+  envDom.textContent = "运行环境: " + init.env;
+
+  document.querySelector('footer').appendChild(envDom);
+
+  createApp({
+    data() {
+      return { ...init }
+    },
+    methods: {
+      reset(){
+        const initData = { ...init }
+        this.resetInfo = '已重置'
+        Object.keys(initData).map(key => {
+          if (key !== 'type' && key !== 'target' && key !== 'resetInfo') {
+            this[key] = initData[key]
+          }
+        })
+        
+        setTimeout(() => {
+          this.resetInfo = ''
+        }, 1000)
+      },
+      copy(){
+        const copyText = document.getElementById(this.frontendConvert ? "frontendConvertResult" : "result");
+        copyText.select();
+        copyText.setSelectionRange(0, 99999); // For mobile devices
+        // navigator.clipboard.writeText(copyText.value);
+        document.execCommand("copy");
+        this.copyInfo = '成功'
+        setTimeout(() => {
+          this.copyInfo = ''
+        }, 2000)
+        // if (this.isHttps) {
+        //   alert("✅ 已复制");
+        // }
+      },
+      autoResize(refName) {
+        const el = this.$refs[refName]
+        if (el) {
+          el.style.height = 'auto'
+          el.style.height = Math.min(el.scrollHeight, 500) + 'px'
+        }
+      },
+    },
+    watch: {
+      async result(v) {
+        try {
+          const { scriptMap, rewriteParser, ruleParser } = "__SCRIPT__"
+          let $request = {
+            method: 'GET',
+            headers: {},
+            url: v,
+          }
+          const $notification = {
+            post: (...arg) => {
+              console.log(...arg)
+            }
+          }
+          const $done = res => {
+            console.log(res.response.body)
+            this.frontendConvertResult = res.response.body
+          }
+          eval(rewriteParser)
+        } catch (e) {
+          console.error(e)
+        }
+      },
+      type(v) {
+        if(v === 'rule-set' && !this.target.endsWith('rule-set')){
+          // this.target='rule-set'
+          if (this.env === 'Surge') {
+            this.target = 'surge-rule-set'
+          } else if (this.env === 'Loon') {
+            this.target = 'loon-rule-set'
+          } else if (this.env === 'Stash') {
+            this.target = 'stash-rule-set'
+          } else if (this.env === 'Shadowrocket') {
+            this.target = 'shadowrocket-rule-set'
+          } else {
+            this.target=''
+          }
+        } else if(v !== 'rule-set' && this.target.endsWith('rule-set')){
+          this.target=''
+        } else if(v.endsWith('-script') && !this.target.endsWith('-script')){
+          // this.target='surge-script'
+          if (this.env === 'Surge') {
+            this.target = 'surge-script'
+          } else if (this.env === 'Loon') {
+            this.target = 'loon-script'
+          } else if (this.env === 'Stash') {
+            this.target = 'stash-script'
+          } else if (this.env === 'Shadowrocket') {
+            this.target = 'shadowrocket-script'
+          } else {
+            this.target=''
+          }
+        } else if(!v.endsWith('-script') && this.target.endsWith('-script')){
+          this.target=''
+        } else if(v === 'plain-text' && this.target !== 'plain-text'){
+          this.target='plain-text'
+        } else if(v !== 'plain-text' && this.target === 'plain-text'){
+          this.target=''
+        } 
+      },
+      target(v) {
+        if(v.endsWith('rule-set') && this.type !== 'rule-set'){
+          this.type='rule-set'
+        } else if(v.endsWith('-script') && !this.type.endsWith('-script')){
+          // this.type='qx-script'
+          if (this.env === 'Surge') {
+            this.type = 'surge-script'
+          } else if (this.env === 'Loon') {
+            this.type = 'loon-script'
+          } else if (this.env === 'Stash') {
+            this.type = 'stash-script'
+          } else if (this.env === 'Shadowrocket') {
+            this.type = 'shadowrocket-script'
+          } else {
+            this.type=''
+          }
+        } else if(v === 'plain-text' && this.type !== 'plain-text'){
+          this.type='plain-text'
+        }
+      },
+      inputType() {
+        this.$nextTick(() => {
+          this.autoResize(this.inputType === 'local-text' ? 'textTextarea' : 'srcTextarea')
+        })
+      },
+  },
+    computed: {
+      frontendConvertDisabled: function () {
+        return !/^Node\.js/i.test(init.env)
+      },
+      result: function () {
+        if (this.src && this.src.startsWith('https://quantumult.app/x/open-app/add-resource')) {
+          return '⚠️⚠️⚠️ 你填入的是 QX 导入链接. 请安装 https://t.me/h5683577/211 然后在浏览器中预览资源 分别转换规则集和重写'
+        }
+        if (this.src && this.src.startsWith('https://www.nsloon.com/')) {
+          return '⚠️⚠️⚠️ 你填入的是 Loon 导入链接. 请自行提取资源文件链接填入. 一般是类似 https://www.nsloon.com/openloon/import?plugin= 后面的部分(可能需要 URL 解码)'
+        }
+				const fields = {}
+        if (this.jsc_all) {
+          fields.jsc = '.'
+        }
+        if (this.jsc2_all) {
+          fields.jsc2 = '.'
+        }
+        
+        params.forEach(field => {
+         if (this[field]!==''&&this[field]!==false) {
+            fields[field] = this[field]
+          }
+        })
+
+        const type = this.types.find(i => i.value === this.type)
+        const target = this.targets.find(i => i.value === this.target)
+        let src = this.src
+        if (this.inputType === 'local-text') {
+          if (this.localtext) {
+            src = 'http://local.text'
+          } else {
+            return ''
+          }
+        } else {
+          delete fields.localtext
+        }
+        if (src && target && type) {
+          const suffix = target.suffix || ''
+          const pathType = (this.target.endsWith('-script') || this.target === 'plain-text') ? 'convert' : 'file'
+        
+          const plainUrl = src.split('?')[0]
+          const plainUrlFilename = plainUrl.substring(plainUrl.lastIndexOf('/') + 1)
+
+          let filename = this.filename || (this.target === 'plain-text' ? plainUrlFilename : plainUrlFilename.split('.')[0])
+          if (!filename) {
+            filename = 'untitled-' + Date.now()
+          }
+
+          return this.baseUrl + pathType + '/_start_/' + src.replace(/#.*$/, '').replace(/😂/g, '%F0%9F%98%82') + '/_end_/' + encodeURIComponent(filename) + suffix + '?' + Object.keys(fields).map(i => i + '=' + encodeURIComponent(fields[i])).join('&')
+
+          // let url = new URL(this.baseUrl + pathType + '/_start_/' + src + '/_end_/' + encodeURIComponent(filename) + suffix)
+          
+          // Object.keys(fields).map(i => {
+          //  url.searchParams.append(i, fields[i])
+          // })
+          // return url.href
+        }
+
+        return ''
+        
+      },
+      previewResult: function () {
+        try {
+          const array = this.result.split('/_end_/')
+          return array[0] + '/_end_/' + array[1].replace('?', '.txt?')
+        } catch (e) {
+          return ''
+        }
+      },
+      isHttps: function () {
+        return location.protocol === 'https:'
+      }
+    },
+    mounted() {
+      if (this.editMode) {
+        openAllDetails(),
+        this.$nextTick(() => {
+          this.autoResize('textTextarea')
+        })
+      }
+  }
+  }).mount('#app')
+</script>
+  </body>
+
+</html>
