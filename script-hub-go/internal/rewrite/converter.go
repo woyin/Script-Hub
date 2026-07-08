@@ -28,6 +28,8 @@ type surgeOutput struct {
 	SgArg           []SgArgument
 	BodyRewrites    []BodyRewriteEntry
 	ConditionalMITMKey string
+	SkipProxy     []string
+	RealIP        []string
 }
 
 // convertModules converts parsed modules to the target app format.
@@ -62,6 +64,8 @@ func (p *Parser) convertToSurgeFormat(modules []ParsedModule, target string, arg
 		out.SgArg = append(out.SgArg, mod.SgArg...)
 		out.BodyRewrites = append(out.BodyRewrites, mod.BodyRewrites...)
 		out.ConditionalMITMKey = mod.ConditionalMITMKey
+		out.SkipProxy = append(out.SkipProxy, mod.SkipProxy...)
+		out.RealIP = append(out.RealIP, mod.RealIP...)
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 
@@ -351,6 +355,18 @@ func (p *Parser) formatSurgeOutput(out surgeOutput) string {
 	}
 	sb.WriteString("\n")
 
+	// [General] section for Surge/Shadowrocket (skip-proxy, always-real-ip)
+	if len(out.SkipProxy) > 0 || len(out.RealIP) > 0 {
+		sb.WriteString("[General]\n")
+		if len(out.SkipProxy) > 0 {
+			sb.WriteString("skip-proxy = " + strings.Join(out.SkipProxy, ", ") + "\n")
+		}
+		if len(out.RealIP) > 0 {
+			sb.WriteString("always-real-ip = " + strings.Join(out.RealIP, ", ") + "\n")
+		}
+		sb.WriteString("\n")
+	}
+
 	if len(out.Rules) > 0 {
 		sb.WriteString("[Rule]\n")
 		for _, r := range out.Rules {
@@ -440,6 +456,7 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 	var metaExtra []string
 	var sgArg []SgArgument
 	var bodyRewrites []BodyRewriteEntry
+	var skipProxy, realIP []string
 	delComments := isTrue(args["del"])
 
 	for _, mod := range modules {
@@ -450,6 +467,8 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 		metaExtra = append(metaExtra, mod.MetaExtra...)
 		sgArg = append(sgArg, mod.SgArg...)
 		bodyRewrites = append(bodyRewrites, mod.BodyRewrites...)
+		skipProxy = append(skipProxy, mod.SkipProxy...)
+		realIP = append(realIP, mod.RealIP...)
 		mitm = append(mitm, mod.MITM...)
 		rules = append(rules, mod.Rules...)
 
@@ -520,6 +539,27 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 		}
 		sb.WriteString("\n")
 	}
+	// [General] section (Loon: force-http-engine-hosts, skip-proxy, real-ip)
+	synMitm := isTrue(args["synMitm"])
+	if synMitm {
+		skipProxy = uniqueStrings(skipProxy)
+		realIP = uniqueStrings(realIP)
+	}
+	var generalItems []string
+	if synMitm && len(mitm) > 0 {
+		generalItems = append(generalItems, "force-http-engine-hosts = "+strings.Join(mitm, ", "))
+	}
+	if len(skipProxy) > 0 {
+		generalItems = append(generalItems, "skip-proxy = "+strings.Join(skipProxy, ", "))
+	}
+	if len(realIP) > 0 {
+		generalItems = append(generalItems, "real-ip = "+strings.Join(realIP, ", "))
+	}
+	if len(generalItems) > 0 {
+		sb.WriteString("[General]\n")
+		sb.WriteString(strings.Join(generalItems, "\n\n") + "\n\n")
+	}
+
 	if len(mitm) > 0 {
 		sb.WriteString("[MITM]\n")
 		sb.WriteString("hostname = " + strings.Join(mitm, ", ") + "\n")
@@ -682,6 +722,8 @@ func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, arg
 		out.SgArg = append(out.SgArg, mod.SgArg...)
 		out.BodyRewrites = append(out.BodyRewrites, mod.BodyRewrites...)
 		out.ConditionalMITMKey = mod.ConditionalMITMKey
+		out.SkipProxy = append(out.SkipProxy, mod.SkipProxy...)
+		out.RealIP = append(out.RealIP, mod.RealIP...)
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 

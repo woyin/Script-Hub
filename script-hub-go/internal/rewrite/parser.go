@@ -108,6 +108,8 @@ type ParsedModule struct {
 	SgArg    []SgArgument
 	BodyRewrites []BodyRewriteEntry
 	ConditionalMITMKey string // set when #!arguments has value=hostname
+	SkipProxy    []string
+	RealIP       []string
 }
 
 // BodyRewriteEntry holds a parsed body rewrite rule (jq or replace-regex).

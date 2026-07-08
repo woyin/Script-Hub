@@ -293,6 +293,27 @@ func qxJsonActionToBodyRewrite(pattern, httpType, action, suffix string) *BodyRe
 	return nil
 }
 
+// parseHostnamesFromValue extracts comma-separated hostnames from a value string,
+// stripping %APPEND%/%INSERT% method markers.
+func parseHostnamesFromValue(val string) []string {
+	val = strings.TrimSpace(val)
+	val = strings.ReplaceAll(val, "%APPEND%", "")
+	val = strings.ReplaceAll(val, "%INSERT%", "")
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return nil
+	}
+	parts := strings.Split(val, ",")
+	var result []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
 // parseArgumentsLine parses Surge #!arguments lines into SgArgument entries.
 // Supports two forms:
 //   - "#!arguments=key:value,key2:value2" (colon-separated)
@@ -827,6 +848,17 @@ func (p *Parser) parseSurgeModule(content string, args map[string]string) []Pars
 	// [Body Rewrite] section (Surge)
 	if bodyRewrites, ok := sections["Body Rewrite"]; ok {
 		module.BodyRewrites = append(module.BodyRewrites, parseBodyRewriteSection(bodyRewrites)...)
+	}
+
+	// Extract skip-proxy / real-ip / always-real-ip from [Host] or non-section lines
+	// These are collected into ParsedModule.SkipProxy / RealIP for [General] output
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if m := regexp.MustCompile(`^skip-proxy\s*=\s*(.+)`).FindStringSubmatch(line); len(m) == 2 {
+			module.SkipProxy = append(module.SkipProxy, parseHostnamesFromValue(m[1])...)
+		} else if m := regexp.MustCompile(`^(?:always-)?real-ip\s*=\s*(.+)`).FindStringSubmatch(line); len(m) == 2 {
+			module.RealIP = append(module.RealIP, parseHostnamesFromValue(m[1])...)
+		}
 	}
 
 	// [Rule] section
