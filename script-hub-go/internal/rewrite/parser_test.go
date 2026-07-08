@@ -244,3 +244,45 @@ func TestSurgeArgumentsOutput(t *testing.T) {
 		t.Fatalf("surge arguments metadata missing:\n%s", out)
 	}
 }
+
+func TestParseMockLine(t *testing.T) {
+	// Surge Map Local form
+	rw := parseMockLine(`^api\.example\.com data-type=text data="hello" status-code=200 header="Content-Type:text/plain"`)
+	if rw == nil || rw.Type != RewriteTypeMock {
+		t.Fatalf("mock not parsed: %+v", rw)
+	}
+	if rw.MockType != "text" || rw.MockData != "hello" || rw.MockStatus != "200" {
+		t.Fatalf("mock fields wrong: %+v", rw)
+	}
+	// echo-response form
+	rw = parseMockLine("^api\\.example\\.com url echo-response text/plain https://example.com/data")
+	if rw == nil || rw.Type != RewriteTypeEchoResponse {
+		t.Fatalf("echo-response not parsed: %+v", rw)
+	}
+	if rw.EchoCT != "text/plain" || rw.EchoURL != "https://example.com/data" {
+		t.Fatalf("echo fields wrong: %+v", rw)
+	}
+}
+
+func TestRejectDictMapLocal(t *testing.T) {
+	p := &Parser{}
+	mods := []ParsedModule{{Rewrites: []ParsedRewrite{{Pattern: "^api", Type: RewriteTypeRejectDict}}}}
+	out := p.convertToSurgeFormat(mods, "surge", map[string]string{})
+	if !strings.Contains(out, "[Map Local]") || !strings.Contains(out, `data="{}"`) {
+		t.Fatalf("reject-dict map local missing:\n%s", out)
+	}
+}
+
+func TestLoonMockResponseBody(t *testing.T) {
+	p := &Parser{}
+	mods := []ParsedModule{{Rewrites: []ParsedRewrite{{
+		Pattern:  "^api",
+		Type:     RewriteTypeMock,
+		MockType: "json",
+		MockIsLoon: true,
+	}}}}
+	out := p.convertToLoonFormat(mods, "loon", map[string]string{})
+	if !strings.Contains(out, "mock-response-body") || !strings.Contains(out, "data-type=json") {
+		t.Fatalf("loon mock-response-body missing:\n%s", out)
+	}
+}

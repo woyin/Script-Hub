@@ -130,6 +130,21 @@ func (p *Parser) classifySurgeRewrite(rw ParsedRewrite, out *surgeOutput, args m
 			rejectType = "reject-drop"
 		}
 		out.URLRewrites = append(out.URLRewrites, fmt.Sprintf("%s %s", rw.Pattern, rejectType))
+		// Surge also emits Map Local entries for dict/array/200/img/tinygif/video
+		switch rw.Type {
+		case RewriteTypeRejectDict:
+			out.MapLocal = append(out.MapLocal,
+				fmt.Sprintf(`%s data-type=text data="{}" status-code=200 header="Content-Type:application/json"`, rw.Pattern))
+		case RewriteTypeRejectArray:
+			out.MapLocal = append(out.MapLocal,
+				fmt.Sprintf(`%s data-type=text data="[]" status-code=200`, rw.Pattern))
+		case RewriteTypeReject200:
+			out.MapLocal = append(out.MapLocal,
+				fmt.Sprintf(`%s data-type=text data=" " status-code=200`, rw.Pattern))
+		case RewriteTypeRejectImg, RewriteTypeRejectTinyGif, RewriteTypeRejectVideo:
+			out.MapLocal = append(out.MapLocal,
+				fmt.Sprintf(`%s data-type=tiny-gif status-code=200`, rw.Pattern))
+		}
 
 	case RewriteTypeURLRewrite:
 		out.URLRewrites = append(out.URLRewrites, fmt.Sprintf("%s %s", rw.Pattern, rw.Replacement))
@@ -141,6 +156,28 @@ func (p *Parser) classifySurgeRewrite(rw ParsedRewrite, out *surgeOutput, args m
 	case RewriteTypeMapLocal:
 		// Native Surge [Map Local] pass-through
 		out.MapLocal = append(out.MapLocal, rw.Replacement)
+
+	case RewriteTypeMock:
+		// Surge [Map Local] from a parsed mock entry
+		ml := fmt.Sprintf("%s data-type=%s", rw.Pattern, rw.MockType)
+		if rw.MockData != "" {
+			ml += fmt.Sprintf(` data="%s"`, rw.MockData)
+		} else if rw.MockDataPath != "" {
+			ml += fmt.Sprintf(` data-path="%s"`, rw.MockDataPath)
+		}
+		if rw.MockStatus != "" {
+			ml += fmt.Sprintf(` status-code=%s`, rw.MockStatus)
+		}
+		if rw.MockHeader != "" {
+			ml += fmt.Sprintf(` header="%s"`, rw.MockHeader)
+		}
+		if rw.MockBase64 {
+			ml = fmt.Sprintf("%s data-type=base64", rw.Pattern)
+			if rw.MockData != "" {
+				ml += fmt.Sprintf(` data="%s"`, rw.MockData)
+			}
+		}
+		out.MapLocal = append(out.MapLocal, ml)
 
 	// Fallback for non-QX sources that still have header/body rewrite types
 	case RewriteTypeRequestHeader, RewriteTypeResponseHeader:
@@ -496,6 +533,25 @@ func (p *Parser) convertLoonRewrite(rw ParsedRewrite) string {
 
 	case RewriteTypeMapLocal:
 		return rw.Replacement
+
+	case RewriteTypeMock:
+		// Loon mock-response-body
+		ml := fmt.Sprintf("%s mock-response-body", rw.Pattern)
+		if rw.MockType != "" {
+			ml += fmt.Sprintf(" data-type=%s", rw.MockType)
+		}
+		if rw.MockData != "" {
+			ml += fmt.Sprintf(` data="%s"`, rw.MockData)
+		} else if rw.MockDataPath != "" {
+			ml += fmt.Sprintf(` data-path="%s"`, rw.MockDataPath)
+		}
+		if rw.MockStatus != "" {
+			ml += fmt.Sprintf(" status-code=%s", rw.MockStatus)
+		}
+		if rw.MockHeader != "" {
+			ml += fmt.Sprintf(` header="%s"`, rw.MockHeader)
+		}
+		return ml
 
 	default:
 		return ""

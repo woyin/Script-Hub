@@ -75,6 +75,120 @@ func isMetaExtraLine(line string) bool {
 	return true
 }
 
+// parseMockLine parses a mock/echo-response line into a ParsedRewrite.
+// Matches Rewrite-Parser.js getMockInfo triggers:
+//   - "url echo-response CT URL"
+//   - lines containing data="..." or data-type= (Surge Map Local / Loon mock-response-body)
+func parseMockLine(line string) *ParsedRewrite {
+	mockRe := regexp.MustCompile(`\s+(?:data-type|status-code|header|data|data-path|mock-data-is-base64)\s*=`)
+	if strings.Contains(line, " echo-response ") || mockRe.MatchString(line) {
+		rw := &ParsedRewrite{}
+		fields := strings.Fields(line)
+		if len(fields) > 0 {
+			rw.Pattern = strings.TrimPrefix(fields[0], "#")
+			rw.Pattern = strings.Trim(rw.Pattern, `"`)
+		}
+		if strings.Contains(line, " echo-response ") {
+			rw.Type = RewriteTypeEchoResponse
+			parts := strings.Split(line, " echo-response ")
+			if len(parts) >= 2 {
+				rest := strings.TrimSpace(parts[1])
+				restFields := strings.Fields(rest)
+				if len(restFields) >= 1 {
+					rw.EchoCT = restFields[0]
+				}
+				if len(restFields) >= 2 {
+					rw.EchoURL = strings.Join(restFields[1:], " ")
+				}
+			}
+			return rw
+		}
+		// data-type/data/data-path form
+		rw.Type = RewriteTypeMock
+		if strings.Contains(line, " mock-response-body") {
+			rw.MockIsLoon = true
+		}
+		if strings.Contains(line, " mock-request-body") {
+			rw.Type = RewriteTypeMockRequestBody
+		}
+		rw.MockData = unquoteField(mockField(line, "data="))
+		rw.MockDataPath = unquoteField(mockField(line, "data-path="))
+		rw.MockType = mockField(line, "data-type=")
+		if rw.MockType == "" {
+			rw.MockType = "file"
+		}
+		rw.MockStatus = mockField(line, "status-code=")
+		rw.MockHeader = unquoteField(mockField(line, "header="))
+		if v := mockField(line, "mock-data-is-base64="); v == "true" {
+			rw.MockBase64 = true
+		}
+		// mockurl = data || datapath
+		if rw.MockData != "" {
+			rw.EchoURL = rw.MockData
+		} else if rw.MockDataPath != "" {
+			rw.EchoURL = rw.MockDataPath
+		}
+		// Loon data-type → Content-Type mapping
+		if rw.MockIsLoon && rw.MockHeader == "" {
+			rw.MockHeader = loonMockContentType(rw.MockType)
+		}
+		return rw
+	}
+	return nil
+}
+
+// mockField extracts a `key=value` field from a mock line (value up to next space
+// that starts a new key= or end of line), with surrounding quotes stripped.
+func mockField(line, key string) string {
+	idx := strings.Index(line, key)
+	if idx < 0 {
+		return ""
+	}
+	rest := strings.TrimLeft(line[idx+len(key):], " ")
+	// value ends at the next " key=" pattern or end
+	end := len(rest)
+	if m := regexp.MustCompile(`\s+(?:data-type|status-code|header|data|data-path|mock-data-is-base64)=`).FindStringIndex(rest); m != nil {
+		end = m[0]
+	}
+	return strings.Trim(strings.TrimSpace(rest[:end]), `"`)
+}
+
+func unquoteField(s string) string {
+	return strings.Trim(s, `"`)
+}
+
+// loonMockContentType maps a Loon mock data-type to a Content-Type header,
+// matching Rewrite-Parser.js getMockInfo switch.
+func loonMockContentType(dt string) string {
+	switch dt {
+	case "json":
+		return "Content-Type:application/json"
+	case "text", "plain":
+		return "Content-Type:text/plain"
+	case "css":
+		return "Content-Type:text/css"
+	case "html":
+		return "Content-Type:text/html"
+	case "javascript":
+		return "Content-Type:text/javascript"
+	case "png":
+		return "Content-Type:image/png"
+	case "gif":
+		return "Content-Type:image/gif"
+	case "jpeg":
+		return "Content-Type:image/jpeg"
+	case "tiff":
+		return "Content-Type:image/tiff"
+	case "svg":
+		return "Content-Type:image/svg+xml"
+	case "mp4":
+		return "Content-Type:video/mp4"
+	case "form-data":
+		return "Content-Type:application/x-www-form-urlencoded"
+	}
+	return ""
+}
+
 // parseArgumentsLine parses Surge #!arguments lines into SgArgument entries.
 // Supports two forms:
 //   - "#!arguments=key:value,key2:value2" (colon-separated)
@@ -496,6 +610,11 @@ func (p *Parser) parseSurgeModule(content string, args map[string]string) []Pars
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
+			// Try to parse as a structured mock entry; fall back to pass-through
+			if mr := parseMockLine(line); mr != nil && mr.Type == RewriteTypeMock {
+				module.Rewrites = append(module.Rewrites, *mr)
+				continue
+			}
 			rw := ParsedRewrite{
 				Type:        RewriteTypeMapLocal,
 				Replacement: line, // Store full line for pass-through
@@ -697,6 +816,16 @@ func (p *Parser) parseLoonPlugin(content string, args map[string]string) []Parse
 
 	if rewrites, ok := sections["Rewrite"]; ok {
 		for _, line := range rewrites {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			// Loon mock-response-body lines: parse as mock first
+			if mr := parseMockLine(line); mr != nil && (mr.Type == RewriteTypeMock || mr.Type == RewriteTypeMockRequestBody) {
+				module.Rewrites = append(module.Rewrites, *mr)
+				module.MITM = append(module.MITM, extractHostnames(mr.Pattern)...)
+				continue
+			}
 			rw := parseLoonRewriteLine(line)
 			if rw != nil {
 				module.Rewrites = append(module.Rewrites, *rw)

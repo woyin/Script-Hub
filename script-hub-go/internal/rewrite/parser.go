@@ -52,6 +52,8 @@ const (
 	RewriteTypeRejectArray
 	RewriteTypeRejectVideo
 	RewriteTypeRejectDrop
+	RewriteTypeMock
+	RewriteTypeMockRequestBody
 	RewriteTypeScript
 	RewriteTypeHeaderRewrite
 	RewriteTypeURLRewrite
@@ -67,6 +69,13 @@ type ParsedRewrite struct {
 	ReplacePart  string // For QX header/body: the replacement string (after ->)
 	EchoCT       string // For echo-response: content type
 	EchoURL      string // For echo-response: echo data URL
+	MockData     string // Mock inline data
+	MockDataPath string // Mock data file path
+	MockType     string // data-type (file/text/json/...)
+	MockStatus   string // status-code
+	MockHeader   string // header
+	MockBase64   bool   // mock-data-is-base64
+	MockIsLoon   bool   // Loon mock-response-body form
 	ScriptPath   string
 	ScriptType   string // http-request, http-response, cron
 	Arguments    string
