@@ -92,7 +92,8 @@ func (p *Parser) classifySurgeRewrite(rw ParsedRewrite, out *surgeOutput, args m
 				scriptName, rw.Pattern, scriptURL, echoArg))
 
 	case RewriteTypeReject, RewriteTypeRejectDict, RewriteTypeRejectImg,
-		RewriteTypeRejectTinyGif, RewriteTypeReject200, RewriteTypeRejectArray:
+		RewriteTypeRejectTinyGif, RewriteTypeReject200, RewriteTypeRejectArray,
+		RewriteTypeRejectVideo, RewriteTypeRejectDrop:
 		rejectType := "reject"
 		switch rw.Type {
 		case RewriteTypeRejectDict:
@@ -105,6 +106,11 @@ func (p *Parser) classifySurgeRewrite(rw ParsedRewrite, out *surgeOutput, args m
 			rejectType = "reject-tinygif"
 		case RewriteTypeRejectArray:
 			rejectType = "reject-array"
+		case RewriteTypeRejectVideo:
+			// JS maps reject-video to reject-tinygif on Surge/Shadowrocket
+			rejectType = "reject-tinygif"
+		case RewriteTypeRejectDrop:
+			rejectType = "reject-drop"
 		}
 		out.URLRewrites = append(out.URLRewrites, fmt.Sprintf("%s %s", rw.Pattern, rejectType))
 
@@ -359,7 +365,8 @@ func (p *Parser) convertLoonRewrite(rw ParsedRewrite) string {
 		return fmt.Sprintf("%s url-response-body %s", rw.Pattern, rw.Replacement)
 
 	case RewriteTypeReject, RewriteTypeRejectDict, RewriteTypeRejectImg,
-		RewriteTypeRejectTinyGif, RewriteTypeReject200, RewriteTypeRejectArray:
+		RewriteTypeRejectTinyGif, RewriteTypeReject200, RewriteTypeRejectArray,
+		RewriteTypeRejectVideo, RewriteTypeRejectDrop:
 		return fmt.Sprintf("%s url-reject", rw.Pattern)
 
 	case RewriteTypeURLRewrite:

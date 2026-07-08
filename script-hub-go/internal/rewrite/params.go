@@ -351,7 +351,85 @@ func containsKeyword(rw ParsedRewrite, keyword string) bool {
 		strings.Contains(rw.Arguments, keyword)
 }
 
+// ApplySniPm appends extended-matching (sni) and pre-matching (pm) flags to
+// rules whose value matches a keyword, mirroring JS sni/pm handling. IP-CIDR
+// rules are skipped for sni (JS: x.search(/^ip6?-[ca]/i) == -1).
+func ApplySniPm(rules []string, sni, pm string) []string {
+	sniItems := getArgArr(sni)
+	pmItems := getArgArr(pm)
+	if len(sniItems) == 0 && len(pmItems) == 0 {
+		return rules
+	}
+	for i, rule := range rules {
+		trimmed := strings.TrimSpace(rule)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		isIPRule := strings.HasPrefix(lower, "ip-cidr") || strings.HasPrefix(lower, "ip6-cidr") ||
+			strings.HasPrefix(lower, "ip-asn") || strings.HasPrefix(lower, "geoip")
+		appended := false
+		if sniItems != nil && !isIPRule {
+			for _, item := range sniItems {
+				if strings.Contains(trimmed, item) {
+					rules[i] = rule + ",extended-matching"
+					appended = true
+					break
+				}
+			}
+		}
+		if pmItems != nil {
+			for _, item := range pmItems {
+				if strings.Contains(trimmed, item) {
+					if appended {
+						rules[i] = rules[i] + ",pre-matching"
+					} else {
+						rules[i] = rule + ",pre-matching"
+					}
+					break
+				}
+			}
+		}
+	}
+	return rules
+}
+
 // isTrue checks if a string represents a truthy value.
 func isTrue(s string) bool {
 	return s == "true" || s == "1" || s == "True"
+}
+
+// dedupRewrites removes duplicate rewrites by pattern (rwptn), matching JS rwBox.
+// Body rewrite entries are intentionally NOT deduplicated (order-dependent).
+func dedupRewrites(rws []ParsedRewrite) []ParsedRewrite {
+	seen := make(map[string]bool)
+	result := make([]ParsedRewrite, 0, len(rws))
+	for _, rw := range rws {
+		key := rw.Pattern
+		if key == "" {
+			result = append(result, rw)
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, rw)
+		}
+	}
+	return result
+}
+
+// dedupScripts removes duplicate scripts by type+pattern+path+args+requiresBody,
+// matching JS jsBox dedup keys.
+func dedupScripts(rws []ParsedRewrite) []ParsedRewrite {
+	seen := make(map[string]bool)
+	result := make([]ParsedRewrite, 0, len(rws))
+	for _, rw := range rws {
+		key := strings.Join([]string{rw.ScriptType, rw.Pattern, rw.ScriptPath, rw.Arguments}, "|") +
+			fmt.Sprintf("|%v", rw.RequiresBody)
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, rw)
+		}
+	}
+	return result
 }

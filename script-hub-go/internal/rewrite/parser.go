@@ -50,6 +50,8 @@ const (
 	RewriteTypeRejectTinyGif
 	RewriteTypeReject200
 	RewriteTypeRejectArray
+	RewriteTypeRejectVideo
+	RewriteTypeRejectDrop
 	RewriteTypeScript
 	RewriteTypeHeaderRewrite
 	RewriteTypeURLRewrite
@@ -188,6 +190,11 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 
 		// Apply policy to rules
 		modules[i].Rules = ApplyPolicyToRules(modules[i].Rules, input.Arguments["policy"])
+		modules[i].Rules = ApplySniPm(modules[i].Rules, input.Arguments["sni"], input.Arguments["pm"])
+
+		// Deduplicate rewrites and scripts (matches JS rwBox/jsBox dedup)
+		modules[i].Rewrites = dedupRewrites(modules[i].Rewrites)
+		modules[i].Scripts = dedupScripts(modules[i].Scripts)
 
 		// Deduplicate MITM
 		modules[i].MITM = uniqueStrings(modules[i].MITM)

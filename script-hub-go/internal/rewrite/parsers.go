@@ -8,6 +8,42 @@ import (
 
 const scriptHubRawURL = "https://raw.githubusercontent.com/Script-Hub-Org/Script-Hub/main"
 
+// applyPinPout applies Pin (y, include/uncomment) and Pout (x, exclude) filters
+// to raw input lines, mirroring Rewrite-Parser.js Pin0/Pout0 behavior:
+//   - y: any keyword matching the line strips a leading comment marker so the
+//     rule is kept (rescued from being dropped as a comment).
+//   - x: any keyword matching the line prepends ";#" so the rule is excluded.
+func applyPinPout(lines []string, args map[string]string) []string {
+	includeItems := getArgArr(args["y"])
+	excludeItems := getArgArr(args["x"])
+	if includeItems == nil && excludeItems == nil {
+		return lines
+	}
+	out := make([]string, len(lines))
+	for i, raw := range lines {
+		line := raw
+		if includeItems != nil {
+			for _, item := range includeItems {
+				if strings.Contains(line, item) {
+					line = strings.TrimPrefix(strings.TrimLeft(line, " "), "#")
+					line = strings.TrimPrefix(line, ";")
+					break
+				}
+			}
+		}
+		if excludeItems != nil {
+			for _, item := range excludeItems {
+				if strings.Contains(line, item) {
+					line = ";#" + strings.TrimLeft(line, " ")
+					break
+				}
+			}
+		}
+		out[i] = line
+	}
+	return out
+}
+
 // parseQXRewrite parses Quantumult X rewrite format.
 // QX format examples:
 //   ^https?://example.com url request-header (\r\n)User-Agent:.+(\r\n) request-header $1User-Agent: Chrome$2
@@ -24,6 +60,7 @@ func (p *Parser) parseQXRewrite(content string, args map[string]string) []Parsed
 	module.Name = "QX-Rewrite"
 
 	lines := strings.Split(content, "\n")
+	lines = applyPinPout(lines, args)
 	for i, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
@@ -156,6 +193,12 @@ func parseQXLine(line string) *ParsedRewrite {
 		return rw
 	case "reject-array":
 		rw.Type = RewriteTypeRejectArray
+		return rw
+	case "reject-video":
+		rw.Type = RewriteTypeRejectVideo
+		return rw
+	case "reject-drop":
+		rw.Type = RewriteTypeRejectDrop
 		return rw
 
 	case "302", "307":
@@ -396,6 +439,12 @@ func parseSurgeRewriteLine(line string) *ParsedRewrite {
 		return rw
 	case "reject-array":
 		rw.Type = RewriteTypeRejectArray
+		return rw
+	case "reject-video":
+		rw.Type = RewriteTypeRejectVideo
+		return rw
+	case "reject-drop":
+		rw.Type = RewriteTypeRejectDrop
 		return rw
 	default:
 		rw.Type = RewriteTypeURLRewrite
