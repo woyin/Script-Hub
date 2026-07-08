@@ -340,6 +340,30 @@ func ApplyMetadataOverrides(module *ParsedModule, args map[string]string) {
 	if icon, ok := args["icon"]; ok && icon != "" {
 		module.Icon = icon
 	}
+	// category parameter overrides parsed #!category (JS: modInfoObj.category = category)
+	if cat, ok := args["category"]; ok && cat != "" {
+		module.Category = cat
+	}
+}
+
+// CategoryForOutput returns the category/keyword value mapped for the target app:
+//   - Loon: category → emitted under "tag"
+//   - others: keyword → emitted under "category"
+// Mirrors Rewrite-Parser.js metadata key remapping.
+func CategoryForOutput(module *ParsedModule, isLoon bool) (key, value string) {
+	if isLoon {
+		if module.Category != "" {
+			return "tag", module.Category
+		}
+	} else {
+		if module.Keyword != "" {
+			return "category", module.Keyword
+		}
+		if module.Category != "" {
+			return "category", module.Category
+		}
+	}
+	return "", ""
 }
 
 // containsKeyword checks if a ParsedRewrite matches a keyword

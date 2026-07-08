@@ -374,6 +374,12 @@ func (p *Parser) parseSurgeModule(content string, args map[string]string) []Pars
 			module.Name = strings.TrimPrefix(line, "#!name=")
 		} else if strings.HasPrefix(line, "#!desc=") {
 			module.Desc = strings.TrimPrefix(line, "#!desc=")
+		} else if strings.HasPrefix(line, "#!icon=") {
+			module.Icon = strings.TrimPrefix(line, "#!icon=")
+		} else if strings.HasPrefix(line, "#!category=") {
+			module.Category = strings.TrimPrefix(line, "#!category=")
+		} else if strings.HasPrefix(line, "#!keyword=") {
+			module.Keyword = strings.TrimPrefix(line, "#!keyword=")
 		}
 	}
 
@@ -600,6 +606,12 @@ func (p *Parser) parseLoonPlugin(content string, args map[string]string) []Parse
 			module.Name = strings.TrimPrefix(line, "#!name=")
 		} else if strings.HasPrefix(line, "#!desc=") {
 			module.Desc = strings.TrimPrefix(line, "#!desc=")
+		} else if strings.HasPrefix(line, "#!icon=") {
+			module.Icon = strings.TrimPrefix(line, "#!icon=")
+		} else if strings.HasPrefix(line, "#!category=") {
+			module.Category = strings.TrimPrefix(line, "#!category=")
+		} else if strings.HasPrefix(line, "#!keyword=") {
+			module.Keyword = strings.TrimPrefix(line, "#!keyword=")
 		}
 	}
 

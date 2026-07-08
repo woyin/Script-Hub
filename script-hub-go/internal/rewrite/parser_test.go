@@ -117,3 +117,34 @@ func TestSurgePanelHostOutput(t *testing.T) {
 		t.Fatalf("host section missing:\n%s", out)
 	}
 }
+
+func TestCategoryMapping(t *testing.T) {
+	// non-Loon: keyword → category
+	mod := &ParsedModule{Keyword: "tools"}
+	k, v := CategoryForOutput(mod, false)
+	if k != "category" || v != "tools" {
+		t.Fatalf("non-loon keyword mapping: got %s=%s", k, v)
+	}
+	// Loon: category → tag
+	mod = &ParsedModule{Category: "tools"}
+	k, v = CategoryForOutput(mod, true)
+	if k != "tag" || v != "tools" {
+		t.Fatalf("loon category mapping: got %s=%s", k, v)
+	}
+}
+
+func TestCategoryOutput(t *testing.T) {
+	p := &Parser{}
+	mods := []ParsedModule{{Keyword: "tools"}}
+	// Surge: keyword → category
+	surgeOut := p.convertToSurgeFormat(mods, "surge", map[string]string{})
+	if !strings.Contains(surgeOut, "#!category=tools") {
+		t.Fatalf("surge category missing:\n%s", surgeOut)
+	}
+	// Loon: category → tag
+	mods = []ParsedModule{{Category: "tools"}}
+	loonOut := p.convertToLoonFormat(mods, "loon", map[string]string{})
+	if !strings.Contains(loonOut, "#!tag=tools") {
+		t.Fatalf("loon tag missing:\n%s", loonOut)
+	}
+}

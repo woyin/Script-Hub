@@ -22,6 +22,8 @@ type surgeOutput struct {
 	Name            string
 	Desc            string
 	Icon            string
+	CategoryKey     string
+	CategoryValue   string
 }
 
 // convertModules converts parsed modules to the target app format.
@@ -51,6 +53,7 @@ func (p *Parser) convertToSurgeFormat(modules []ParsedModule, target string, arg
 		out.Name = mod.Name
 		out.Desc = mod.Desc
 		out.Icon = mod.Icon
+		out.CategoryKey, out.CategoryValue = CategoryForOutput(&mod, false)
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 
@@ -229,6 +232,9 @@ func (p *Parser) formatSurgeOutput(out surgeOutput) string {
 	if out.Icon != "" {
 		sb.WriteString(fmt.Sprintf("#!icon=%s\n", out.Icon))
 	}
+	if out.CategoryKey != "" && out.CategoryValue != "" {
+		sb.WriteString(fmt.Sprintf("#!%s=%s\n", out.CategoryKey, out.CategoryValue))
+	}
 	sb.WriteString("\n")
 
 	if len(out.Rules) > 0 {
@@ -304,12 +310,14 @@ func (p *Parser) formatSurgeOutput(out surgeOutput) string {
 func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args map[string]string) string {
 	var rules, rewrites, scripts, mitm []string
 	var name, desc, icon string
+	var catKey, catValue string
 	delComments := isTrue(args["del"])
 
 	for _, mod := range modules {
 		name = mod.Name
 		desc = mod.Desc
 		icon = mod.Icon
+		catKey, catValue = CategoryForOutput(&mod, true)
 		mitm = append(mitm, mod.MITM...)
 		rules = append(rules, mod.Rules...)
 
@@ -344,6 +352,9 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 	}
 	if icon != "" {
 		sb.WriteString(fmt.Sprintf("#!icon=%s\n", icon))
+	}
+	if catKey != "" && catValue != "" {
+		sb.WriteString(fmt.Sprintf("#!%s=%s\n", catKey, catValue))
 	}
 	sb.WriteString("\n")
 
@@ -496,6 +507,7 @@ func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, arg
 		out.Name = mod.Name
 		out.Desc = mod.Desc
 		out.Icon = mod.Icon
+		out.CategoryKey, out.CategoryValue = CategoryForOutput(&mod, false)
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 
@@ -534,6 +546,9 @@ func (p *Parser) formatStashOutput(out surgeOutput) string {
 	}
 	if out.Icon != "" {
 		sb.WriteString(fmt.Sprintf("#!icon=%s\n", out.Icon))
+	}
+	if out.CategoryKey != "" && out.CategoryValue != "" {
+		sb.WriteString(fmt.Sprintf("#!%s=%s\n", out.CategoryKey, out.CategoryValue))
 	}
 	sb.WriteString("\n")
 
@@ -795,6 +810,11 @@ func filterCommented(lines []string) []string {
 	var result []string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
+		// Keep #! lines (e.g. #!error=404); drop other comment lines when del=true
+		if strings.HasPrefix(trimmed, "#!") {
+			result = append(result, line)
+			continue
+		}
 		if !strings.HasPrefix(trimmed, "#") {
 			result = append(result, line)
 		}

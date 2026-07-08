@@ -91,6 +91,8 @@ type ParsedModule struct {
 	CronExp  string
 	Panels   []PanelInfo
 	Hosts    []HostInfo
+	Category string
+	Keyword  string
 }
 
 // PanelInfo holds a Surge [Panel] entry parsed from script-name/title/content/style.
