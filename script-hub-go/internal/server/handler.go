@@ -25,6 +25,9 @@ func (s *Server) scriptHubHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	baseURL := s.cfg.BaseURL
+	if s.isBeta {
+		baseURL = s.cfg.BetaBaseURL
+	}
 
 	html := frontend.GenerateHTML(baseURL)
 	w.Header().Set("Content-Type", "text/html; charset=UTF-8")
@@ -73,9 +76,17 @@ func (s *Server) ruleParserHandler(w http.ResponseWriter, r *http.Request) {
 	queryParams := parseQueryString(urlArg)
 
 	parser := rule.NewParser(s.cfg)
+	target := queryParams["target"]
+	if target == "" || target == "rule-set" {
+		// Mirror JS: when target is the generic "rule-set", infer the platform
+		// from the request User-Agent (Surge/LanceX/Egern, Stash, Loon, Shadowrocket).
+		if inferred := inferTargetFromUA(r); inferred != "" {
+			target = inferred
+		}
+	}
 	input := rule.ParseInput{
 		URLs:      decodeReqArr(req),
-		TargetApp: queryParams["target"],
+		TargetApp: target,
 		Arguments: queryParams,
 	}
 
@@ -189,4 +200,24 @@ func decodeReqArr(req string) []string {
 		decoded = req
 	}
 	return []string{decoded}
+}
+
+// inferTargetFromUA maps a request User-Agent to a rule-set target platform,
+// matching rule-parser.js UA detection. Returns "" if no match.
+func inferTargetFromUA(r *http.Request) string {
+	ua := r.Header.Get("User-Agent")
+	if ua == "" {
+		return ""
+	}
+	switch {
+	case strings.Contains(ua, "Surge"), strings.Contains(ua, "LanceX"), strings.Contains(ua, "Egern"):
+		return "surge-rule-set"
+	case strings.Contains(ua, "Stash"):
+		return "stash-rule-set"
+	case strings.Contains(ua, "Loon"):
+		return "loon-rule-set"
+	case strings.Contains(ua, "Shadowrocket"):
+		return "shadowrocket-rule-set"
+	}
+	return ""
 }

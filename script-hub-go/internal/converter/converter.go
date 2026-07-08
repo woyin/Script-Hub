@@ -74,7 +74,8 @@ func (c *Converter) Convert(ctx context.Context, input ConvertInput) (ConvertOut
 
 	// subconverter mode: proxy the request through an external subconverter API
 	if subconverterURL != "" {
-		body, _, gerr := c.client.Get(ctx, subconverterURL)
+		reqHeaders := httpclient.ParseCustomHeaders(input.Arguments["headers"])
+		body, _, gerr := c.client.GetWithHeaders(ctx, subconverterURL, reqHeaders)
 		if gerr != nil {
 			return ConvertOutput{
 				Content: gerr.Error(),
@@ -109,7 +110,8 @@ func (c *Converter) Convert(ctx context.Context, input ConvertInput) (ConvertOut
 
 	// Fetch script content
 	if input.URL != "" && !strings.HasPrefix(input.URL, "http://local.text") {
-		scriptContent, _, err = c.client.Get(ctx, input.URL)
+		reqHeaders := httpclient.ParseCustomHeaders(input.Arguments["headers"])
+		scriptContent, _, err = c.client.GetWithHeaders(ctx, input.URL, reqHeaders)
 		if err != nil {
 			return ConvertOutput{
 				Content: "Script fetch error: " + err.Error(),

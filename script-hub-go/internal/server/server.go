@@ -12,13 +12,25 @@ type Server struct {
 	httpServer *http.Server
 	router     *chi.Mux
 	cfg        *config.Config
+	isBeta     bool
 }
 
 func New(cfg *config.Config) *Server {
+	return newServer(cfg, false)
+}
+
+// NewBeta creates a Beta server instance that serves the beta frontend and
+// beta module files, mirroring the JS BETA_PORT dual-service mode.
+func NewBeta(cfg *config.Config) *Server {
+	return newServer(cfg, true)
+}
+
+func newServer(cfg *config.Config, isBeta bool) *Server {
 	r := chi.NewRouter()
 	s := &Server{
 		router: r,
 		cfg:    cfg,
+		isBeta: isBeta,
 	}
 	s.setupRoutes()
 	return s

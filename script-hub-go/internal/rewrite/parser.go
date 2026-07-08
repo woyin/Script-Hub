@@ -115,8 +115,9 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 			body = localText
 		} else {
 			var bodies []string
+			reqHeaders := httpclient.ParseCustomHeaders(input.Arguments["headers"])
 			for _, u := range input.URLs {
-				content, status, err := p.client.Get(ctx, u)
+				content, status, err := p.client.GetWithHeaders(ctx, u, reqHeaders)
 				if err != nil {
 					log.Printf("rewrite fetch error for %s: %v", u, err)
 					continue

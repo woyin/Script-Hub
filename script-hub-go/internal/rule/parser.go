@@ -71,12 +71,13 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 			body = localText
 		} else {
 			var bodies []string
+			reqHeaders := httpclient.ParseCustomHeaders(input.Arguments["headers"])
 			for _, u := range input.URLs {
 				decodedURL, err := decodeURL(u)
 				if err != nil {
 					decodedURL = u
 				}
-				content, status, err := p.client.Get(ctx, decodedURL)
+				content, status, err := p.client.GetWithHeaders(ctx, decodedURL, reqHeaders)
 				if err != nil {
 					log.Printf("rule fetch error for %s: %v", decodedURL, err)
 					continue
