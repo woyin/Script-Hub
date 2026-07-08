@@ -156,6 +156,7 @@ func ParseCustomHeaders(headerStr string) map[string]string {
 	if headerStr == "" {
 		return headers
 	}
+	headerStr = strings.ReplaceAll(headerStr, "\r\n", "\n")
 	lines := strings.Split(headerStr, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
