@@ -518,6 +518,27 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 	}
 	sb.WriteString("\n")
 
+	// [Argument] section: Surge #!arguments → Loon interactive parameters
+	if len(sgArg) > 0 {
+		sb.WriteString("[Argument]\n")
+		for _, a := range sgArg {
+			val := a.Value
+			if a.Type == "switch" {
+				if strings.HasPrefix(val, "true") {
+					val = `"true","false"`
+				} else {
+					val = `"false","true"`
+				}
+			}
+			tag := a.Tag
+			if tag == "" {
+				tag = "tag=" + a.Key + ", desc=" + a.Key
+			}
+			sb.WriteString(fmt.Sprintf("%s=%s,%s,%s\n", a.Key, a.Type, val, tag))
+		}
+		sb.WriteString("\n")
+	}
+
 	if len(rules) > 0 {
 		sb.WriteString("[Rule]\n")
 		for _, r := range rules {
@@ -920,7 +941,9 @@ func (p *Parser) convertToGenericFormat(modules []ParsedModule, target string, a
 	}
 	if len(mitm) > 0 {
 		sb.WriteString("[MITM]\n")
-		sb.WriteString("hostname = %APPEND% " + strings.Join(mitm, ", ") + "\n")
+		// Stash YAML format: hostname = %APPEND% "host1"\n    - "host2"
+		hostnameStr := strings.Join(mitm, `"`+"\n    - "+`"`)
+		sb.WriteString("hostname = %APPEND% \"" + hostnameStr + "\"\n")
 	}
 	return sb.String()
 }
