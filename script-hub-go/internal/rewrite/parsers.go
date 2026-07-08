@@ -965,6 +965,32 @@ func parseSurgeScriptLine(line string) *ParsedRewrite {
 				rw.RequiresBody = val == "1" || val == "true"
 			case "argument":
 				rw.Arguments = val
+			case "max-size":
+				rw.MaxSize = val
+			case "event-name":
+				rw.EventName = val
+			case "binary-body-mode":
+				rw.BinaryBody = val == "1" || val == "true"
+			case "wake-system":
+				rw.WakeSystem = val == "1" || val == "true"
+			case "ability":
+				rw.Ability = val
+			case "engine":
+				rw.Engine = val
+			case "enable":
+				rw.Enable = val == "1" || val == "true"
+			case "script-update-interval":
+				rw.ScriptUpdateInterval = val
+			case "img-url":
+				rw.ImgURL = val
+			case "tag":
+				rw.Tag = val
+			case "cronexp", "cronexpr":
+				rw.CronExp = val
+			case "debug":
+				rw.Debug = val
+			case "desc":
+				rw.Desc = val
 			}
 		} else {
 			if cp == "http-request" || cp == "http-response" {

@@ -84,13 +84,24 @@ type ParsedRewrite struct {
 	MockIsLoon   bool   // Loon mock-response-body form
 	BodyRewrite  *BodyRewriteEntry // non-nil when parsed from body rewrite line
 	ScriptPath   string
-	ScriptType   string // http-request, http-response, cron
+	ScriptType   string // http-request, http-response, cron, generic
 	Arguments    string
 	Timeout      int
 	RequiresBody bool
 	BodyType     string // request-body, response-body
 	CronExp      string // Cron expression for scheduled scripts
 	Engine       string // Script engine (Surge-specific: javascript, wasm, etc.)
+	MaxSize      string // max-size parameter
+	EventName    string // event-name parameter
+	BinaryBody   bool   // binary-body-mode
+	WakeSystem   bool   // wake-system
+	Ability      string // ability parameter
+	Enable       bool   // enable parameter
+	ScriptUpdateInterval string // script-update-interval
+	ImgURL       string // img-url
+	Tag          string // tag (alternative script name source)
+	Debug        string // debug parameter
+	Desc         string // desc parameter
 	MITM         []string
 }
 

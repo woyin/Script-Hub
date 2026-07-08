@@ -298,14 +298,13 @@ func (p *Parser) classifySurgeScript(rw ParsedRewrite, out *surgeOutput, args ma
 	if rw.RequiresBody {
 		requiresBody = 1
 	}
-	argStr := ""
-	if rw.Arguments != "" {
-		argStr = fmt.Sprintf(", argument=%s", rw.Arguments)
-	}
 
 	scriptName := rw.Replacement
 	if scriptName == "" {
 		scriptName = sanitizeName(rw.Pattern)
+	}
+	if rw.Tag != "" {
+		scriptName = rw.Tag
 	}
 
 	// Cron scripts use a different Surge output format
@@ -314,15 +313,69 @@ func (p *Parser) classifySurgeScript(rw ParsedRewrite, out *surgeOutput, args ma
 		if cronexp == "" {
 			cronexp = "0 0 * * *"
 		}
-		out.Scripts = append(out.Scripts,
-			fmt.Sprintf("%s = type=cron, cronexp=%s, script-path=%s, timeout=%d%s",
-				scriptName, cronexp, rw.ScriptPath, timeout, argStr))
+		var parts []string
+		parts = append(parts, "type=cron")
+		parts = append(parts, fmt.Sprintf("cronexp=%s", cronexp))
+		parts = append(parts, fmt.Sprintf("script-path=%s", rw.ScriptPath))
+		parts = append(parts, fmt.Sprintf("timeout=%d", timeout))
+		if rw.Arguments != "" {
+			parts = append(parts, fmt.Sprintf("argument=%s", rw.Arguments))
+		}
+		if rw.WakeSystem {
+			parts = append(parts, "wake-system=true")
+		}
+		if rw.Engine != "" {
+			parts = append(parts, fmt.Sprintf("engine=%s", rw.Engine))
+		}
+		if rw.ScriptUpdateInterval != "" {
+			parts = append(parts, fmt.Sprintf("script-update-interval=%s", rw.ScriptUpdateInterval))
+		}
+		out.Scripts = append(out.Scripts, scriptName+" = "+strings.Join(parts, ", "))
 		return
 	}
 
-	out.Scripts = append(out.Scripts,
-		fmt.Sprintf("%s = type=%s, pattern=%s, script-path=%s, requires-body=%d, max-size=0, script-update-interval=86400, timeout=%d%s",
-			scriptName, rw.ScriptType, rw.Pattern, rw.ScriptPath, requiresBody, timeout, argStr))
+	// Standard script format
+	var parts []string
+	parts = append(parts, fmt.Sprintf("type=%s", rw.ScriptType))
+	if rw.Pattern != "" {
+		parts = append(parts, fmt.Sprintf("pattern=%s", rw.Pattern))
+	}
+	parts = append(parts, fmt.Sprintf("script-path=%s", rw.ScriptPath))
+	parts = append(parts, fmt.Sprintf("requires-body=%d", requiresBody))
+	if rw.MaxSize != "" {
+		parts = append(parts, fmt.Sprintf("max-size=%s", rw.MaxSize))
+	} else {
+		parts = append(parts, "max-size=0")
+	}
+	if rw.ScriptUpdateInterval != "" {
+		parts = append(parts, fmt.Sprintf("script-update-interval=%s", rw.ScriptUpdateInterval))
+	} else {
+		parts = append(parts, "script-update-interval=86400")
+	}
+	parts = append(parts, fmt.Sprintf("timeout=%d", timeout))
+	if rw.Arguments != "" {
+		parts = append(parts, fmt.Sprintf("argument=%s", rw.Arguments))
+	}
+	if rw.EventName != "" {
+		parts = append(parts, fmt.Sprintf("event-name=%s", rw.EventName))
+	}
+	if rw.BinaryBody {
+		parts = append(parts, "binary-body-mode=true")
+	}
+	if rw.WakeSystem {
+		parts = append(parts, "wake-system=true")
+	}
+	if rw.Engine != "" {
+		parts = append(parts, fmt.Sprintf("engine=%s", rw.Engine))
+	}
+	if rw.ImgURL != "" {
+		parts = append(parts, fmt.Sprintf("img-url=%s", rw.ImgURL))
+	}
+	if rw.Enable {
+		parts = append(parts, "enable=true")
+	}
+
+	out.Scripts = append(out.Scripts, scriptName+" = "+strings.Join(parts, ", "))
 }
 
 // formatSurgeOutput assembles the Surge .sgmodule format.
