@@ -126,6 +126,8 @@ type ParsedModule struct {
 	ConditionalMITMKey string // set when #!arguments has value=hostname
 	SkipProxy    []string
 	RealIP       []string
+	HNAddMethod  string // %APPEND% or %INSERT% (detected from input)
+	FHEAddMethod string // for force-http-engine-hosts
 }
 
 // BodyRewriteEntry holds a parsed body rewrite rule (jq or replace-regex).

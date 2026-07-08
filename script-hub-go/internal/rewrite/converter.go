@@ -30,6 +30,7 @@ type surgeOutput struct {
 	ConditionalMITMKey string
 	SkipProxy     []string
 	RealIP        []string
+	HNAddMethod   string // %APPEND% or %INSERT%
 }
 
 // convertModules converts parsed modules to the target app format.
@@ -66,6 +67,9 @@ func (p *Parser) convertToSurgeFormat(modules []ParsedModule, target string, arg
 		out.ConditionalMITMKey = mod.ConditionalMITMKey
 		out.SkipProxy = append(out.SkipProxy, mod.SkipProxy...)
 		out.RealIP = append(out.RealIP, mod.RealIP...)
+		if mod.HNAddMethod != "" {
+			out.HNAddMethod = mod.HNAddMethod
+		}
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 
@@ -494,7 +498,11 @@ func (p *Parser) formatSurgeOutput(out surgeOutput) string {
 		if out.ConditionalMITMKey != "" {
 			hnKey = out.ConditionalMITMKey
 		}
-		sb.WriteString(hnKey + " = %APPEND% " + strings.Join(out.MITM, ", ") + "\n")
+		addMethod := out.HNAddMethod
+			if addMethod == "" {
+				addMethod = "%APPEND%"
+			}
+			sb.WriteString(hnKey + " = " + addMethod + " " + strings.Join(out.MITM, ", ") + "\n")
 	}
 
 	return sb.String()
@@ -702,9 +710,13 @@ func (p *Parser) convertLoonRewrite(rw ParsedRewrite) string {
 	case RewriteTypeMapLocal:
 		return rw.Replacement
 
-	case RewriteTypeMock:
-		// Loon mock-response-body
-		ml := fmt.Sprintf("%s mock-response-body", rw.Pattern)
+	case RewriteTypeMock, RewriteTypeMockRequestBody:
+		// Loon mock-response-body / mock-request-body
+		mockBodyType := "mock-response-body"
+		if rw.Type == RewriteTypeMockRequestBody {
+			mockBodyType = "mock-request-body"
+		}
+		ml := fmt.Sprintf("%s %s", rw.Pattern, mockBodyType)
 		if rw.MockType != "" {
 			ml += fmt.Sprintf(" data-type=%s", rw.MockType)
 		}
@@ -798,6 +810,9 @@ func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, arg
 		out.ConditionalMITMKey = mod.ConditionalMITMKey
 		out.SkipProxy = append(out.SkipProxy, mod.SkipProxy...)
 		out.RealIP = append(out.RealIP, mod.RealIP...)
+		if mod.HNAddMethod != "" {
+			out.HNAddMethod = mod.HNAddMethod
+		}
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 
@@ -995,8 +1010,15 @@ func (p *Parser) convertToGenericFormat(modules []ParsedModule, target string, a
 	if len(mitm) > 0 {
 		sb.WriteString("[MITM]\n")
 		// Stash YAML format: hostname = %APPEND% "host1"\n    - "host2"
+		addMethod := "%APPEND%"
+		for _, mod := range modules {
+			if mod.HNAddMethod != "" {
+				addMethod = mod.HNAddMethod
+				break
+			}
+		}
 		hostnameStr := strings.Join(mitm, `"`+"\n    - "+`"`)
-		sb.WriteString("hostname = %APPEND% \"" + hostnameStr + "\"\n")
+		sb.WriteString("hostname = " + addMethod + " \"" + hostnameStr + "\"\n")
 	}
 	return sb.String()
 }

@@ -490,6 +490,12 @@ func parseQXLine(line string) *ParsedRewrite {
 	// Remove leading comment markers
 	cleanLine := strings.TrimLeft(line, "#;")
 
+	// Try QX Cron line first: cron_expression http(s)://...
+	// Pattern: "5 * * * * https://example.com/script.js, tag=xxx"
+	if isQXCronLine(cleanLine) {
+		return parseQXCronLine(cleanLine)
+	}
+
 	// Split on " url " to get pattern and the rest
 	urlIdx := strings.Index(cleanLine, " url ")
 	if urlIdx < 0 {
@@ -874,6 +880,17 @@ func (p *Parser) parseSurgeModule(content string, args map[string]string) []Pars
 	// [MITM] section
 	if mitm, ok := sections["MITM"]; ok {
 		module.MITM = append(module.MITM, parseMITMSection(mitm)...)
+		// Detect %INSERT% or %APPEND% method from hostname line
+		for _, line := range mitm {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(strings.ToLower(line), "hostname") {
+				if strings.Contains(line, "%INSERT%") {
+					module.HNAddMethod = "%INSERT%"
+				} else {
+					module.HNAddMethod = "%APPEND%"
+				}
+			}
+		}
 	}
 
 	module.MITM = uniqueStrings(module.MITM)
@@ -1078,6 +1095,16 @@ func (p *Parser) parseLoonPlugin(content string, args map[string]string) []Parse
 
 	if mitm, ok := sections["MITM"]; ok {
 		module.MITM = append(module.MITM, parseMITMSection(mitm)...)
+		for _, line := range mitm {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(strings.ToLower(line), "hostname") {
+				if strings.Contains(line, "%INSERT%") {
+					module.HNAddMethod = "%INSERT%"
+				} else {
+					module.HNAddMethod = "%APPEND%"
+				}
+			}
+		}
 	}
 
 	module.MITM = uniqueStrings(module.MITM)
@@ -1227,6 +1254,71 @@ func parseLoonHeaderActionLine(line string, parts []string) *ParsedRewrite {
 		rw.Type = RewriteTypeHeaderRewrite
 	}
 	return &rw
+}
+
+// isQXCronLine checks if a QX line is a cron expression followed by a URL.
+// Format: "5 * * * * https://example.com/script.js" or with tag
+func isQXCronLine(line string) bool {
+	// Must contain a URL somewhere
+	if !strings.Contains(line, "://") {
+		return false
+	}
+	// Must start with cron-like tokens (digits and */ and spaces)
+	parts := strings.Fields(line)
+	if len(parts) < 6 {
+		return false
+	}
+	// First 5 parts should be cron fields (digits, *, /)
+	cronPart := strings.Join(parts[:5], " ")
+	cronRe := regexp.MustCompile(`^[\d*/]+(\s+[\d*/]+){4}$`)
+	return cronRe.MatchString(cronPart)
+}
+
+// parseQXCronLine parses a QX cron line into a ParsedRewrite with type=cron.
+func parseQXCronLine(line string) *ParsedRewrite {
+	line = strings.ReplaceAll(line, "  ", " ")
+	line = strings.TrimLeft(line, "#;")
+
+	// Split into cron expression and URL
+	urlRe := regexp.MustCompile(`(https?|ftp|file)://`)
+	loc := urlRe.FindStringIndex(line)
+	if loc == nil {
+		return nil
+	}
+
+	cronPart := strings.TrimSpace(line[:loc[0]])
+	urlPart := strings.TrimSpace(line[loc[0]:])
+
+	// Extract tag from URL part
+	var scriptName string
+	tagRe := regexp.MustCompile(`[,\s]\s*tag\s*=\s*([^\s,]+)`)
+	if m := tagRe.FindStringSubmatch(urlPart); len(m) >= 2 {
+		scriptName = m[1]
+	}
+	// Clean URL: remove tag and other params after the URL
+	scriptURL := urlPart
+	if commaIdx := strings.Index(scriptURL, ","); commaIdx >= 0 {
+		scriptURL = strings.TrimSpace(scriptURL[:commaIdx])
+	}
+
+	if scriptName == "" {
+		// Derive from URL filename
+		lastSlash := strings.LastIndex(scriptURL, "/")
+		lastDot := strings.LastIndex(scriptURL, ".")
+		if lastSlash >= 0 && lastDot > lastSlash {
+			scriptName = scriptURL[lastSlash+1 : lastDot]
+		}
+	}
+
+	return &ParsedRewrite{
+		Type:        RewriteTypeScript,
+		ScriptType:  "cron",
+		CronExp:     cronPart,
+		ScriptPath:  scriptURL,
+		Replacement: scriptName,
+		Timeout:     120,
+		WakeSystem:  true,
+	}
 }
 
 // parseLoonScriptLine parses a Loon Script section line.
