@@ -25,6 +25,7 @@ type surgeOutput struct {
 	CategoryKey     string
 	CategoryValue   string
 	MetaExtra       []string
+	SgArg           []SgArgument
 }
 
 // convertModules converts parsed modules to the target app format.
@@ -56,6 +57,7 @@ func (p *Parser) convertToSurgeFormat(modules []ParsedModule, target string, arg
 		out.Icon = mod.Icon
 		out.CategoryKey, out.CategoryValue = CategoryForOutput(&mod, false)
 		out.MetaExtra = append(out.MetaExtra, mod.MetaExtra...)
+		out.SgArg = append(out.SgArg, mod.SgArg...)
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 
@@ -88,7 +90,7 @@ func (p *Parser) convertToSurgeFormat(modules []ParsedModule, target string, arg
 		out.Rules = filterCommented(out.Rules)
 	}
 
-	return p.formatSurgeOutput(out)
+	return applyArgumentsTemplate(p.formatSurgeOutput(out), out.SgArg, "surge")
 }
 
 // classifySurgeRewrite classifies a rewrite rule into the correct Surge section.
@@ -173,6 +175,33 @@ func (p *Parser) classifySurgeRewrite(rw ParsedRewrite, out *surgeOutput, args m
 	}
 }
 
+// applyArgumentsTemplate rewrites {key} placeholders in the body per the
+// Surge #!arguments template system:
+//   - Surge/Shadowrocket: {key} → {{{key}}} (Surge toggle template)
+//   - Stash: {key} → actual value
+//   - Loon: only strip {{{ }}} wrappers
+// {{{ and }}} are first normalized to { and } across all platforms.
+func applyArgumentsTemplate(body string, sgArg []SgArgument, platform string) string {
+	if len(sgArg) == 0 && platform != "loon" {
+		return body
+	}
+	body = strings.ReplaceAll(body, "{{{", "{")
+	body = strings.ReplaceAll(body, "}}}", "}")
+	switch platform {
+	case "stash":
+		for _, a := range sgArg {
+			val := strings.TrimSpace(strings.Split(a.Value, ",")[0])
+			body = strings.ReplaceAll(body, "{"+a.Key+"}", val)
+		}
+	case "surge":
+		for _, a := range sgArg {
+			body = strings.ReplaceAll(body, "{"+a.Key+"}", "{{{"+a.Key+"}}}")
+		}
+	}
+	// loon: just the {{{ }}} normalization above
+	return body
+}
+
 // formatSurgePanel formats a PanelInfo as a Surge [Panel] entry.
 func formatSurgePanel(p PanelInfo) string {
 	parts := []string{}
@@ -239,6 +268,15 @@ func (p *Parser) formatSurgeOutput(out surgeOutput) string {
 	}
 	for _, m := range out.MetaExtra {
 		sb.WriteString(m + "\n")
+	}
+	// Surge #!arguments metadata: key:value,...
+	if len(out.SgArg) > 0 {
+		var parts []string
+		for _, a := range out.SgArg {
+			val := strings.TrimSpace(strings.Split(a.Value, ",")[0])
+			parts = append(parts, a.Key+":"+val)
+		}
+		sb.WriteString(fmt.Sprintf("#!arguments=%s\n", strings.Join(parts, ",")))
 	}
 	sb.WriteString("\n")
 
@@ -317,6 +355,7 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 	var name, desc, icon string
 	var catKey, catValue string
 	var metaExtra []string
+	var sgArg []SgArgument
 	delComments := isTrue(args["del"])
 
 	for _, mod := range modules {
@@ -325,6 +364,7 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 		icon = mod.Icon
 		catKey, catValue = CategoryForOutput(&mod, true)
 		metaExtra = append(metaExtra, mod.MetaExtra...)
+		sgArg = append(sgArg, mod.SgArg...)
 		mitm = append(mitm, mod.MITM...)
 		rules = append(rules, mod.Rules...)
 
@@ -393,7 +433,7 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 		sb.WriteString("[MITM]\n")
 		sb.WriteString("hostname = " + strings.Join(mitm, ", ") + "\n")
 	}
-	return sb.String()
+	return applyArgumentsTemplate(sb.String(), sgArg, "loon")
 }
 
 // convertLoonRewrite converts a rewrite entry to Loon [Rewrite] format.
@@ -519,6 +559,7 @@ func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, arg
 		out.Icon = mod.Icon
 		out.CategoryKey, out.CategoryValue = CategoryForOutput(&mod, false)
 		out.MetaExtra = append(out.MetaExtra, mod.MetaExtra...)
+		out.SgArg = append(out.SgArg, mod.SgArg...)
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 
@@ -543,7 +584,7 @@ func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, arg
 		out.Rules = filterCommented(out.Rules)
 	}
 
-	return p.formatStashOutput(out)
+	return applyArgumentsTemplate(p.formatStashOutput(out), out.SgArg, "stash")
 }
 
 func (p *Parser) formatStashOutput(out surgeOutput) string {
@@ -563,6 +604,15 @@ func (p *Parser) formatStashOutput(out surgeOutput) string {
 	}
 	for _, m := range out.MetaExtra {
 		sb.WriteString(m + "\n")
+	}
+	// Surge #!arguments metadata: key:value,...
+	if len(out.SgArg) > 0 {
+		var parts []string
+		for _, a := range out.SgArg {
+			val := strings.TrimSpace(strings.Split(a.Value, ",")[0])
+			parts = append(parts, a.Key+":"+val)
+		}
+		sb.WriteString(fmt.Sprintf("#!arguments=%s\n", strings.Join(parts, ",")))
 	}
 	sb.WriteString("\n")
 

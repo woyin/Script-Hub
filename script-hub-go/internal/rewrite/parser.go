@@ -94,6 +94,15 @@ type ParsedModule struct {
 	Category string
 	Keyword  string
 	MetaExtra []string // extra #!key=value lines (e.g. Loon interactive buttons)
+	SgArg    []SgArgument
+}
+
+// SgArgument holds a Surge module #!arguments entry.
+type SgArgument struct {
+	Key   string
+	Value string
+	Type  string // input, select, switch
+	Tag   string
 }
 
 // PanelInfo holds a Surge [Panel] entry parsed from script-name/title/content/style.

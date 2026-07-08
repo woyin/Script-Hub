@@ -207,3 +207,40 @@ func TestApplyIconReplacementBareName(t *testing.T) {
 		t.Fatalf("bare icon name without network should stay: %s", mod.Icon)
 	}
 }
+
+func TestParseArgumentsLine(t *testing.T) {
+	args := parseArgumentsLine("#!arguments=token:abc123, debug:true")
+	if len(args) < 2 {
+		t.Fatalf("expected 2 args, got %d: %+v", len(args), args)
+	}
+	if args[0].Key != "token" || args[0].Value != "abc123" {
+		t.Fatalf("arg0 wrong: %+v", args[0])
+	}
+	if args[1].Key != "debug" || args[1].Type != "switch" {
+		t.Fatalf("arg1 wrong: %+v", args[1])
+	}
+}
+
+func TestApplyArgumentsTemplate(t *testing.T) {
+	sgArg := []SgArgument{{Key: "token", Value: "abc"}}
+	body := "var t = '{token}'"
+	// Surge: {token} → {{{token}}}
+	out := applyArgumentsTemplate(body, sgArg, "surge")
+	if !strings.Contains(out, "{{{token}}}") {
+		t.Fatalf("surge template wrong: %s", out)
+	}
+	// Stash: {token} → abc
+	out = applyArgumentsTemplate(body, sgArg, "stash")
+	if !strings.Contains(out, "'abc'") {
+		t.Fatalf("stash template wrong: %s", out)
+	}
+}
+
+func TestSurgeArgumentsOutput(t *testing.T) {
+	p := &Parser{}
+	mods := []ParsedModule{{SgArg: []SgArgument{{Key: "token", Value: "abc"}, {Key: "debug", Value: "true"}}}}
+	out := p.convertToSurgeFormat(mods, "surge", map[string]string{})
+	if !strings.Contains(out, "#!arguments=token:abc,debug:true") {
+		t.Fatalf("surge arguments metadata missing:\n%s", out)
+	}
+}

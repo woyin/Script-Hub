@@ -61,7 +61,74 @@ func getJsField(line, key string) string {
 	return strings.Trim(strings.TrimSpace(rest), `"'`)
 }
 
-// parsePanelLine parses a Surge [Panel] line into PanelInfo.
+// isMetaExtraLine reports whether a #! line should be preserved as extra
+// metadata (excludes arguments/select/input which are handled separately).
+func isMetaExtraLine(line string) bool {
+	if !strings.HasPrefix(line, "#!") || !strings.Contains(line, "=") {
+		return false
+	}
+	for _, p := range []string{"#!arguments-desc=", "#!arguments=", "#!select=", "#!input="} {
+		if strings.HasPrefix(line, p) {
+			return false
+		}
+	}
+	return true
+}
+
+// parseArgumentsLine parses Surge #!arguments lines into SgArgument entries.
+// Supports two forms:
+//   - "#!arguments=key:value,key2:value2" (colon-separated)
+//   - "key=type,value,tag=..." (comma-separated, non-#! line)
+func parseArgumentsLine(line string) []SgArgument {
+	trimmed := strings.TrimSpace(line)
+	if strings.Contains(trimmed, "#!arguments") {
+		idx := strings.Index(trimmed, "#!arguments")
+		rest := trimmed[idx:]
+		// strip "#!arguments" + optional "="
+		rest = strings.TrimPrefix(rest, "#!arguments")
+		rest = strings.TrimPrefix(strings.TrimLeft(rest, " "), "=")
+		rest = strings.TrimLeft(rest, " ")
+		return parseColonArguments(rest)
+	}
+	// Non-#! line form: key = type,value,tag=...
+	if !strings.HasPrefix(trimmed, "#") && strings.Contains(trimmed, "=") {
+		if regexp.MustCompile(`=\s*(input|select|switch)\s*,`).MatchString(trimmed) {
+			return parseCommaArgument(trimmed)
+		}
+	}
+	return nil
+}
+
+func parseColonArguments(s string) []SgArgument {
+	var args []SgArgument
+	re := regexp.MustCompile(`([^:,]+):(\s*".+?"|[^,]*)`)
+	for _, m := range re.FindAllStringSubmatch(s, -1) {
+		key := strings.TrimSpace(m[1])
+		val := strings.TrimSpace(m[2])
+		key = strings.Trim(key, `"`)
+		val = strings.Trim(val, `"`)
+		typ := "input"
+		if regexp.MustCompile(`^(true|false)$`).MatchString(val) {
+			typ = "switch"
+		}
+		args = append(args, SgArgument{Key: key, Value: val, Type: typ, Tag: "tag=" + key + ", desc=" + key})
+	}
+	return args
+}
+
+func parseCommaArgument(s string) []SgArgument {
+	re := regexp.MustCompile(`(^.*?)\s*=\s*(.*?)\s*,(.*?),\s*([^,]*\s*=.+)`)
+	m := re.FindStringSubmatch(s)
+	if len(m) < 5 {
+		return nil
+	}
+	return []SgArgument{{
+		Key:   strings.TrimSpace(m[1]),
+		Type:  strings.TrimSpace(m[2]),
+		Value: strings.TrimSpace(m[3]),
+		Tag:   strings.TrimSpace(m[4]),
+	}}
+}
 // JS trigger: /[=,]\s*script-name\s*=.+/
 func parsePanelLine(line string) *PanelInfo {
 	if !regexp.MustCompile(`[=,]\s*script-name\s*=`).MatchString(line) {
@@ -380,8 +447,12 @@ func (p *Parser) parseSurgeModule(content string, args map[string]string) []Pars
 			module.Category = strings.TrimPrefix(line, "#!category=")
 		} else if strings.HasPrefix(line, "#!keyword=") {
 			module.Keyword = strings.TrimPrefix(line, "#!keyword=")
-		} else if strings.HasPrefix(line, "#!") && strings.Contains(line, "=") {
+		} else if isMetaExtraLine(line) {
 			module.MetaExtra = append(module.MetaExtra, line)
+		}
+		// Parse #!arguments template system
+		if m := parseArgumentsLine(line); m != nil {
+			module.SgArg = append(module.SgArg, m...)
 		}
 	}
 
@@ -614,9 +685,13 @@ func (p *Parser) parseLoonPlugin(content string, args map[string]string) []Parse
 			module.Category = strings.TrimPrefix(line, "#!category=")
 		} else if strings.HasPrefix(line, "#!keyword=") {
 			module.Keyword = strings.TrimPrefix(line, "#!keyword=")
-		} else if strings.HasPrefix(line, "#!") && strings.Contains(line, "=") {
+		} else if isMetaExtraLine(line) {
 			// Preserve other #!key=value metadata (e.g. Loon interactive buttons)
 			module.MetaExtra = append(module.MetaExtra, line)
+		}
+		// Parse #!arguments template system
+		if m := parseArgumentsLine(line); m != nil {
+			module.SgArg = append(module.SgArg, m...)
 		}
 	}
 
