@@ -837,38 +837,50 @@ func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, arg
 		out.Rules = filterCommented(out.Rules)
 	}
 
-	return applyArgumentsTemplate(p.formatStashOutput(out), out.SgArg, "stash")
+	return applyArgumentsTemplate(p.formatStashOutput(out, modules, args), out.SgArg, "stash")
 }
 
-func (p *Parser) formatStashOutput(out surgeOutput) string {
+func (p *Parser) formatStashOutput(out surgeOutput, modules []ParsedModule, args map[string]string) string {
 	var sb strings.Builder
 
+	// Stash uses YAML format for metadata (name: |-\n  value)
 	if out.Name != "" {
-		sb.WriteString(fmt.Sprintf("#!name=%s\n", out.Name))
+		sb.WriteString("name: |-\n  " + out.Name + "\n")
 	}
 	if out.Desc != "" {
-		sb.WriteString(fmt.Sprintf("#!desc=%s\n", out.Desc))
+		sb.WriteString("desc: |-\n  " + out.Desc + "\n")
 	}
 	if out.Icon != "" {
-		sb.WriteString(fmt.Sprintf("#!icon=%s\n", out.Icon))
+		sb.WriteString("icon: |-\n  " + out.Icon + "\n")
 	}
 	if out.CategoryKey != "" && out.CategoryValue != "" {
-		sb.WriteString(fmt.Sprintf("#!%s=%s\n", out.CategoryKey, out.CategoryValue))
+		catKey := out.CategoryKey
+		if catKey == "category" {
+			catKey = "category"
+		}
+		sb.WriteString(catKey + ": |-\n  " + out.CategoryValue + "\n")
 	}
 	for _, m := range out.MetaExtra {
-		sb.WriteString(m + "\n")
+		// Convert #!key=value to key: |-\n  value for Stash YAML
+		if strings.HasPrefix(m, "#!") && strings.Contains(m, "=") {
+			kv := strings.SplitN(m[2:], "=", 2)
+			sb.WriteString(kv[0] + ": |-\n  " + kv[1] + "\n")
+		} else {
+			sb.WriteString(m + "\n")
+		}
 	}
-	// Surge #!arguments metadata: key:value,...
+	// Surge #!arguments metadata
 	if len(out.SgArg) > 0 {
 		var parts []string
 		for _, a := range out.SgArg {
 			val := strings.TrimSpace(strings.Split(a.Value, ",")[0])
 			parts = append(parts, a.Key+":"+val)
 		}
-		sb.WriteString(fmt.Sprintf("#!arguments=%s\n", strings.Join(parts, ",")))
+		sb.WriteString("arguments: |-\n  " + strings.Join(parts, ",") + "\n")
 	}
 	sb.WriteString("\n")
 
+	// Rules section
 	if len(out.Rules) > 0 {
 		sb.WriteString("rules:\n")
 		for _, r := range out.Rules {
@@ -877,81 +889,229 @@ func (p *Parser) formatStashOutput(out surgeOutput) string {
 		sb.WriteString("\n")
 	}
 
+	// Collect tiles and cron from scripts
+	var tiles, cronEntries, providers, otherScripts []string
+	tilesTargets := getArgArr(args["tiles"])
+	tilesColors := getArgArr(args["tcolor"])
+
+	for _, s := range out.Scripts {
+		// Parse script name and fields
+		nameEnd := strings.Index(s, " = ")
+		scriptName := s
+		rest := ""
+		if nameEnd >= 0 {
+			scriptName = s[:nameEnd]
+			rest = s[nameEnd+3:]
+		}
+
+		// Detect script type
+		scriptType := ""
+		if idx := strings.Index(rest, "type="); idx >= 0 {
+			typeEnd := strings.IndexByte(rest[idx+5:], ',')
+			if typeEnd >= 0 {
+				scriptType = rest[idx+5 : idx+5+typeEnd]
+			} else {
+				scriptType = rest[idx+5:]
+			}
+		}
+
+		// Extract script-path for providers
+		scriptPath := ""
+		if idx := strings.Index(rest, "script-path="); idx >= 0 {
+			spStart := idx + len("script-path=")
+			spEnd := strings.IndexByte(rest[spStart:], ',')
+			if spEnd >= 0 {
+				scriptPath = rest[spStart : spStart+spEnd]
+			} else {
+				scriptPath = rest[spStart:]
+			}
+			scriptPath = cleanRegexEscapes(scriptPath)
+		}
+
+		switch {
+		case scriptType == "generic":
+			// Tiles output
+			icon := ""
+			if idx := strings.Index(rest, "img-url="); idx >= 0 {
+				iStart := idx + len("img-url=")
+				iEnd := strings.IndexByte(rest[iStart:], ',')
+				if iEnd >= 0 {
+					icon = rest[iStart : iStart+iEnd]
+				} else {
+					icon = rest[iStart:]
+				}
+			}
+			bgColor := "#5d84f8"
+			for i, t := range tilesTargets {
+				if t == scriptName && i < len(tilesColors) {
+					bgColor = tilesColors[i]
+					break
+				}
+			}
+			var tileParts []string
+			tileParts = append(tileParts, `  - name: "`+scriptName+`"`)
+			tileParts = append(tileParts, `    interval: 3600`)
+			tileParts = append(tileParts, `    title: "`+scriptName+`"`)
+			tileParts = append(tileParts, `    icon: "`+icon+`"`)
+			tileParts = append(tileParts, `    backgroundColor: "`+bgColor+`"`)
+			if idx := strings.Index(rest, "timeout="); idx >= 0 {
+				tStart := idx + len("timeout=")
+				tEnd := strings.IndexByte(rest[tStart:], ',')
+				tv := ""
+				if tEnd >= 0 {
+					tv = rest[tStart : tStart+tEnd]
+				} else {
+					tv = rest[tStart:]
+				}
+				tileParts = append(tileParts, "    timeout: "+tv)
+			}
+			if idx := strings.Index(rest, "argument="); idx >= 0 {
+				aStart := idx + len("argument=")
+				tileParts = append(tileParts, "    argument: "+rest[aStart:])
+			}
+			tiles = append(tiles, strings.Join(tileParts, "\n"))
+			if scriptPath != "" {
+				providers = append(providers, fmt.Sprintf(`  "%s":%s    url: %s%s    interval: 86400`, scriptName, "\n", scriptPath, "\n"))
+			}
+
+		case scriptType == "cron":
+			// Cron output
+			cronexp := "0 0 * * *"
+			if idx := strings.Index(rest, "cronexp="); idx >= 0 {
+				cStart := idx + len("cronexp=")
+				cEnd := strings.IndexByte(rest[cStart:], ',')
+				if cEnd >= 0 {
+					cronexp = rest[cStart : cStart+cEnd]
+				} else {
+					cronexp = rest[cStart:]
+				}
+			}
+			var cronParts []string
+			cronParts = append(cronParts, `    - name: "`+scriptName+`"`)
+			cronParts = append(cronParts, "      cron: "+cronexp)
+			if idx := strings.Index(rest, "timeout="); idx >= 0 {
+				tStart := idx + len("timeout=")
+				tEnd := strings.IndexByte(rest[tStart:], ',')
+				tv := ""
+				if tEnd >= 0 {
+					tv = rest[tStart : tStart+tEnd]
+				} else {
+					tv = rest[tStart:]
+				}
+				cronParts = append(cronParts, "      timeout: "+tv)
+			}
+			cronEntries = append(cronEntries, strings.Join(cronParts, "\n"))
+			if scriptPath != "" {
+				providers = append(providers, fmt.Sprintf(`  "%s":%s    url: %s%s    interval: 86400`, scriptName, "\n", scriptPath, "\n"))
+			}
+
+		default:
+			otherScripts = append(otherScripts, s)
+			if scriptPath != "" {
+				providers = append(providers, fmt.Sprintf(`  "%s":%s    url: %s%s    interval: 86400`, scriptName, "\n", scriptPath, "\n"))
+			}
+		}
+	}
+
+	// HTTP frame
 	hasHTTP := len(out.MITM) > 0 || len(out.HeaderRewrites) > 0 ||
-		len(out.URLRewrites) > 0 || len(out.Scripts) > 0
+		len(out.URLRewrites) > 0 || len(otherScripts) > 0 ||
+		len(out.BodyRewrites) > 0 || len(out.MapLocal) > 0 ||
+		len(out.ForceHTTPHosts) > 0
+
 	if hasHTTP {
 		sb.WriteString("http:\n")
+
+		if len(out.ForceHTTPHosts) > 0 {
+			addMethod := "%APPEND%"
+			for _, mod := range modules {
+				if mod.FHEAddMethod != "" {
+					addMethod = mod.FHEAddMethod
+					break
+				}
+			}
+			sb.WriteString("  force-http-engine-hosts: " + addMethod + " " + strings.Join(out.ForceHTTPHosts, ", ") + "\n")
+		}
 
 		if len(out.MITM) > 0 {
 			sb.WriteString("  mitm:\n")
 			for _, h := range out.MITM {
 				sb.WriteString("    - \"" + h + "\"\n")
 			}
-			sb.WriteString("\n")
 		}
 
 		if len(out.HeaderRewrites) > 0 {
 			sb.WriteString("  header-rewrite:\n")
 			for _, r := range out.HeaderRewrites {
-				sb.WriteString("    - " + r + "\n")
+				sb.WriteString("    - >-\n      " + r + "\n")
 			}
-			sb.WriteString("\n")
 		}
 
 		if len(out.URLRewrites) > 0 {
 			sb.WriteString("  url-rewrite:\n")
 			for _, r := range out.URLRewrites {
-				sb.WriteString("    - " + r + "\n")
+				sb.WriteString("    - >-\n      " + r + "\n")
 			}
-			sb.WriteString("\n")
 		}
 
 		if len(out.MapLocal) > 0 {
 			for _, r := range out.MapLocal {
 				sb.WriteString("  # map-local: " + r + "\n")
 			}
-			sb.WriteString("\n")
 		}
 
 		if len(out.BodyRewrites) > 0 {
 			sb.WriteString("  body-rewrite:\n")
 			for _, br := range out.BodyRewrites {
-				sb.WriteString(fmt.Sprintf("    - %s %s %s\n", br.Type, br.Regex, br.Value))
+				// Stash body-rewrite uses >- folded format
+				brType := br.Type
+				brType = strings.ReplaceAll(brType, "http-request", "request-replace-regex")
+				brType = strings.ReplaceAll(brType, "http-response", "response-replace-regex")
+				brType = strings.ReplaceAll(brType, "request-body", "request-replace-regex")
+				brType = strings.ReplaceAll(brType, "response-body", "response-replace-regex")
+				value := br.Value
+				value = strings.Trim(value, `"'`)
+				sb.WriteString("    - >-\n      " + br.Regex + " " + brType + " " + value + "\n")
 			}
-			sb.WriteString("\n")
 		}
 
-		if len(out.Scripts) > 0 {
+		if len(otherScripts) > 0 {
 			sb.WriteString("  script:\n")
-			for _, s := range out.Scripts {
+			for _, s := range otherScripts {
 				sb.WriteString("    - >-\n      " + s + "\n")
 			}
-			sb.WriteString("\n")
 		}
 	}
 
-	if len(out.Scripts) > 0 {
+	// Tiles (generic scripts)
+	if len(tiles) > 0 {
+		sb.WriteString("tiles:\n")
+		for _, t := range tiles {
+			sb.WriteString(t + "\n")
+		}
+	}
+
+	// Cron section
+	if len(cronEntries) > 0 {
+		sb.WriteString("cron:\n  script:\n")
+		for _, c := range cronEntries {
+			sb.WriteString(c + "\n")
+		}
+	}
+
+	// Script providers (deduplicated)
+	seenProviders := make(map[string]bool)
+	var uniqueProviders []string
+	for _, pr := range providers {
+		if !seenProviders[pr] {
+			seenProviders[pr] = true
+			uniqueProviders = append(uniqueProviders, pr)
+		}
+	}
+	if len(uniqueProviders) > 0 {
 		sb.WriteString("script-providers:\n")
-		seen := make(map[string]bool)
-		for _, s := range out.Scripts {
-			parts := strings.SplitN(s, "=", 2)
-			name := strings.TrimSpace(parts[0])
-			if !seen[name] {
-				seen[name] = true
-				spIdx := strings.Index(s, "script-path=")
-				if spIdx >= 0 {
-					spRest := s[spIdx+len("script-path="):]
-					spEnd := strings.IndexByte(spRest, ',')
-					spVal := spRest
-					if spEnd >= 0 {
-						spVal = spRest[:spEnd]
-					}
-					spVal = cleanRegexEscapes(spVal)
-					sb.WriteString("  " + name + ":\n")
-					sb.WriteString("    url: " + spVal + "\n")
-					sb.WriteString("    interval: 86400\n")
-				}
-			}
+		for _, pr := range uniqueProviders {
+			sb.WriteString(pr + "\n")
 		}
 	}
 
