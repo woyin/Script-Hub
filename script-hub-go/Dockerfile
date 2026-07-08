@@ -22,14 +22,13 @@ RUN go mod download
 COPY . .
 
 ARG TARGETOS TARGETARCH
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -ldflags="-s -w" -trimpath -o /script-hub .
 
 # --- 阶段 2: 运行（scratch 零基础层，~10MB 最终镜像） ---
 FROM scratch
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /script-hub /script-hub
 
 EXPOSE 9100
