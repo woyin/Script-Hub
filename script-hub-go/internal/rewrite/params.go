@@ -323,8 +323,13 @@ func ApplyKeepHeader(args map[string]string) bool {
 // ApplyMetadataOverrides overrides name, desc, icon, category from parameters.
 func ApplyMetadataOverrides(module *ParsedModule, args map[string]string) {
 	if n, ok := args["n"]; ok && n != "" {
-		// Format: name+desc, use ➕ for literal +
-		parts := strings.SplitN(n, "+", 2)
+		// Format: name+desc or name desc (URL decoding turns + into space)
+		// Use ➕ for literal +
+		sep := "+"
+		if !strings.Contains(n, "+") && strings.Contains(n, " ") {
+			sep = " "
+		}
+		parts := strings.SplitN(n, sep, 2)
 		if len(parts) >= 1 && parts[0] != "" {
 			module.Name = strings.ReplaceAll(parts[0], "➕", "+")
 		}
@@ -335,8 +340,6 @@ func ApplyMetadataOverrides(module *ParsedModule, args map[string]string) {
 	if icon, ok := args["icon"]; ok && icon != "" {
 		module.Icon = icon
 	}
-	// category is stored in module metadata but not output in standard formats
-	// filename is handled at the URL/output level, not in the module
 }
 
 // containsKeyword checks if a ParsedRewrite matches a keyword

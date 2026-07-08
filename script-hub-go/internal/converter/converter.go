@@ -141,6 +141,9 @@ func (c *Converter) convertQXToSurge(script string, input ConvertInput, isScript
 	// QX API simple replacements (always applied for script conversion)
 	if isScriptConversion {
 		result = strings.ReplaceAll(result, "$notify(", "$notification.post(")
+		result = strings.ReplaceAll(result, "$prefs.valueForKey(", "$persistentStore.read(")
+		result = strings.ReplaceAll(result, "$prefs.setValueForKey(", "$persistentStore.write(")
+		result = strings.ReplaceAll(result, "$prefs.removeValueForKey(", "$persistentStore.write('', ")
 		result = strings.ReplaceAll(result, "$prefs.get(", "$persistentStore.read(")
 		result = strings.ReplaceAll(result, "$prefs.set(", "$persistentStore.write(")
 		result = strings.ReplaceAll(result, "$prefs.remove(", "// $prefs.remove(")
@@ -175,6 +178,9 @@ func (c *Converter) convertQXToLoon(script string, input ConvertInput, isScriptC
 
 	if isScriptConversion {
 		result = strings.ReplaceAll(result, "$notify(", "$notification.post(")
+		result = strings.ReplaceAll(result, "$prefs.valueForKey(", "$persistentStore.read(")
+		result = strings.ReplaceAll(result, "$prefs.setValueForKey(", "$persistentStore.write(")
+		result = strings.ReplaceAll(result, "$prefs.removeValueForKey(", "$persistentStore.write('', ")
 		result = strings.ReplaceAll(result, "$prefs.get(", "$persistentStore.read(")
 		result = strings.ReplaceAll(result, "$prefs.set(", "$persistentStore.write(")
 	}
