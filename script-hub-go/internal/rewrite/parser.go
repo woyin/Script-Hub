@@ -89,6 +89,26 @@ type ParsedModule struct {
 	Icon     string
 	OpenURL  string
 	CronExp  string
+	Panels   []PanelInfo
+	Hosts    []HostInfo
+}
+
+// PanelInfo holds a Surge [Panel] entry parsed from script-name/title/content/style.
+type PanelInfo struct {
+	Name        string // first field before the first '='
+	Title       string
+	Content     string
+	Style       string
+	ScriptName  string
+	UpdateTimer string
+	Raw         string
+}
+
+// HostInfo holds a Surge [Host] entry: domain = value (server/script:...).
+type HostInfo struct {
+	Domain string
+	Value  string
+	Raw    string
 }
 
 // Parser handles rewrite rule parsing and conversion.

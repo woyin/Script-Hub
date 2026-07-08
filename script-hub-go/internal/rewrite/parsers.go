@@ -3,6 +3,7 @@ package rewrite
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -42,6 +43,59 @@ func applyPinPout(lines []string, args map[string]string) []string {
 		out[i] = line
 	}
 	return out
+}
+
+// getJsField extracts a `key=value` field from a Surge panel/script line using
+// the same logic as Rewrite-Parser.js getJsInfo: split on the key, take the
+// remainder up to the next `,` or end, trimmed of quotes.
+func getJsField(line, key string) string {
+	idx := strings.Index(line, key)
+	if idx < 0 {
+		return ""
+	}
+	rest := strings.TrimSpace(line[idx+len(key):])
+	// field value ends at the next comma that separates fields
+	if comma := strings.Index(rest, ","); comma >= 0 {
+		rest = rest[:comma]
+	}
+	return strings.Trim(strings.TrimSpace(rest), `"'`)
+}
+
+// parsePanelLine parses a Surge [Panel] line into PanelInfo.
+// JS trigger: /[=,]\s*script-name\s*=.+/
+func parsePanelLine(line string) *PanelInfo {
+	if !regexp.MustCompile(`[=,]\s*script-name\s*=`).MatchString(line) {
+		return nil
+	}
+	name := strings.TrimSpace(strings.SplitN(line, "=", 2)[0])
+	name = strings.TrimPrefix(name, "#")
+	return &PanelInfo{
+		Name:        name,
+		Title:       getJsField(line, "title="),
+		Content:     getJsField(line, "content="),
+		Style:       getJsField(line, "style="),
+		ScriptName:  getJsField(line, "script-name="),
+		UpdateTimer: getJsField(line, "update-interval="),
+		Raw:         line,
+	}
+}
+
+// parseHostLine parses a Surge [Host] line: domain = value.
+// JS trigger: /^#?(?:\*|localhost|[-*?0-9a-z]+\.[-*.?0-9a-z]+)\s*=\s*(?:server\s*:\s*|script\s*:\s*)?[\s0-9a-z:/,.]+$/
+func parseHostLine(line string) *HostInfo {
+	hostRe := regexp.MustCompile(`^#?(?:\*|localhost|[-*?0-9a-z]+\.[-*.?0-9a-z]+)\s*=\s*(?:(?:server|script)\s*:\s*)?[\s0-9a-z:/,.]+$`)
+	if !hostRe.MatchString(line) {
+		return nil
+	}
+	parts := strings.SplitN(line, "=", 2)
+	if len(parts) < 2 {
+		return nil
+	}
+	return &HostInfo{
+		Domain: strings.TrimSpace(strings.TrimPrefix(parts[0], "#")),
+		Value:  strings.TrimSpace(parts[1]),
+		Raw:    line,
+	}
 }
 
 // parseQXRewrite parses Quantumult X rewrite format.
@@ -382,6 +436,32 @@ func (p *Parser) parseSurgeModule(content string, args map[string]string) []Pars
 			if rw != nil {
 				module.Scripts = append(module.Scripts, *rw)
 				module.MITM = append(module.MITM, extractHostnames(rw.Pattern)...)
+			}
+		}
+	}
+
+	// [Panel] section (Surge)
+	if panels, ok := sections["Panel"]; ok {
+		for _, line := range panels {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if p := parsePanelLine(line); p != nil {
+				module.Panels = append(module.Panels, *p)
+			}
+		}
+	}
+
+	// [Host] section (Surge)
+	if hosts, ok := sections["Host"]; ok {
+		for _, line := range hosts {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if h := parseHostLine(line); h != nil {
+				module.Hosts = append(module.Hosts, *h)
 			}
 		}
 	}

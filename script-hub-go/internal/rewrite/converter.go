@@ -17,6 +17,8 @@ type surgeOutput struct {
 	Rules           []string
 	MITM            []string
 	ForceHTTPHosts  []string
+	Panels          []string
+	Hosts           []string
 	Name            string
 	Desc            string
 	Icon            string
@@ -57,6 +59,14 @@ func (p *Parser) convertToSurgeFormat(modules []ParsedModule, target string, arg
 		}
 		for _, rw := range mod.Scripts {
 			p.classifySurgeScript(rw, &out, args)
+		}
+		// Panels (Surge only)
+		for _, panel := range mod.Panels {
+			out.Panels = append(out.Panels, formatSurgePanel(panel))
+		}
+		// Hosts
+		for _, host := range mod.Hosts {
+			out.Hosts = append(out.Hosts, fmt.Sprintf("%s = %s", host.Domain, host.Value))
 		}
 	}
 
@@ -158,6 +168,27 @@ func (p *Parser) classifySurgeRewrite(rw ParsedRewrite, out *surgeOutput, args m
 	}
 }
 
+// formatSurgePanel formats a PanelInfo as a Surge [Panel] entry.
+func formatSurgePanel(p PanelInfo) string {
+	parts := []string{}
+	if p.Title != "" {
+		parts = append(parts, "title="+p.Title)
+	}
+	if p.Style != "" {
+		parts = append(parts, "style="+p.Style)
+	}
+	if p.Content != "" {
+		parts = append(parts, "content="+p.Content)
+	}
+	if p.ScriptName != "" {
+		parts = append(parts, "script-name="+p.ScriptName)
+	}
+	if p.UpdateTimer != "" {
+		parts = append(parts, "update-interval="+p.UpdateTimer)
+	}
+	return p.Name + " = " + strings.Join(parts, ", ")
+}
+
 // classifySurgeScript classifies a script entry into the Surge [Script] section.
 func (p *Parser) classifySurgeScript(rw ParsedRewrite, out *surgeOutput, args map[string]string) {
 	timeout := rw.Timeout
@@ -240,14 +271,29 @@ func (p *Parser) formatSurgeOutput(out surgeOutput) string {
 		sb.WriteString("\n")
 	}
 
+	if len(out.Panels) > 0 {
+		sb.WriteString("[Panel]\n")
+		for _, p := range out.Panels {
+			sb.WriteString(p + "\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	// [Host] section: user-defined host mappings + force-http-engine-hosts
+	if len(out.Hosts) > 0 || len(out.ForceHTTPHosts) > 0 {
+		sb.WriteString("[Host]\n")
+		for _, h := range out.Hosts {
+			sb.WriteString(h + "\n")
+		}
+		if len(out.ForceHTTPHosts) > 0 {
+			sb.WriteString("force-http-engine-hosts = " + strings.Join(out.ForceHTTPHosts, ", ") + "\n")
+		}
+		sb.WriteString("\n")
+	}
+
 	if len(out.MITM) > 0 {
 		sb.WriteString("[MITM]\n")
 		sb.WriteString("hostname = %APPEND% " + strings.Join(out.MITM, ", ") + "\n")
-	}
-
-	if len(out.ForceHTTPHosts) > 0 {
-		sb.WriteString("\n[Host]\n")
-		sb.WriteString("force-http-engine-hosts = " + strings.Join(out.ForceHTTPHosts, ", ") + "\n")
 	}
 
 	return sb.String()

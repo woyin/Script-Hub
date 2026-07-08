@@ -82,3 +82,38 @@ func TestApplySniPm(t *testing.T) {
 		t.Fatalf("sni wrongly applied to ip-cidr: %v", out)
 	}
 }
+
+func TestParsePanelLine(t *testing.T) {
+	p := parsePanelLine("MyPanel = title=Hello, style=info, script-name=panel.js, update-interval=60")
+	if p == nil {
+		t.Fatal("panel not parsed")
+	}
+	if p.Name != "MyPanel" || p.Title != "Hello" || p.Style != "info" || p.ScriptName != "panel.js" || p.UpdateTimer != "60" {
+		t.Fatalf("panel fields wrong: %+v", p)
+	}
+}
+
+func TestParseHostLine(t *testing.T) {
+	h := parseHostLine("example.com = server:1.2.3.4")
+	if h == nil {
+		t.Fatal("host not parsed")
+	}
+	if h.Domain != "example.com" || h.Value != "server:1.2.3.4" {
+		t.Fatalf("host fields wrong: %+v", h)
+	}
+}
+
+func TestSurgePanelHostOutput(t *testing.T) {
+	p := &Parser{}
+	mods := []ParsedModule{{
+		Panels: []PanelInfo{{Name: "P", Title: "T", ScriptName: "s.js"}},
+		Hosts:  []HostInfo{{Domain: "a.com", Value: "server:1.1.1.1"}},
+	}}
+	out := p.convertToSurgeFormat(mods, "surge", map[string]string{})
+	if !strings.Contains(out, "[Panel]") || !strings.Contains(out, "script-name=s.js") {
+		t.Fatalf("panel section missing:\n%s", out)
+	}
+	if !strings.Contains(out, "[Host]") || !strings.Contains(out, "a.com = server:1.1.1.1") {
+		t.Fatalf("host section missing:\n%s", out)
+	}
+}
