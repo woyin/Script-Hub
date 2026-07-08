@@ -107,6 +107,7 @@ type ParsedModule struct {
 	MetaExtra []string // extra #!key=value lines (e.g. Loon interactive buttons)
 	SgArg    []SgArgument
 	BodyRewrites []BodyRewriteEntry
+	ConditionalMITMKey string // set when #!arguments has value=hostname
 }
 
 // BodyRewriteEntry holds a parsed body rewrite rule (jq or replace-regex).
@@ -224,6 +225,14 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 	for i := range modules {
 		// Apply metadata overrides (name, desc, icon)
 		ApplyMetadataOverrides(&modules[i], input.Arguments)
+
+		// Check for conditional MITM (#!arguments with value=hostname)
+		for _, arg := range modules[i].SgArg {
+			if arg.Value == "hostname" {
+				modules[i].ConditionalMITMKey = "{{{" + arg.Key + "}}}"
+				break
+			}
+		}
 
 		// Apply icon replacement / KeLee icon name resolution
 		ApplyIconReplacement(ctx, &modules[i], input.Arguments, p.client,

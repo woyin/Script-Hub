@@ -27,6 +27,7 @@ type surgeOutput struct {
 	MetaExtra       []string
 	SgArg           []SgArgument
 	BodyRewrites    []BodyRewriteEntry
+	ConditionalMITMKey string
 }
 
 // convertModules converts parsed modules to the target app format.
@@ -60,6 +61,7 @@ func (p *Parser) convertToSurgeFormat(modules []ParsedModule, target string, arg
 		out.MetaExtra = append(out.MetaExtra, mod.MetaExtra...)
 		out.SgArg = append(out.SgArg, mod.SgArg...)
 		out.BodyRewrites = append(out.BodyRewrites, mod.BodyRewrites...)
+		out.ConditionalMITMKey = mod.ConditionalMITMKey
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 
@@ -297,11 +299,21 @@ func (p *Parser) classifySurgeScript(rw ParsedRewrite, out *surgeOutput, args ma
 		argStr = fmt.Sprintf(", argument=%s", rw.Arguments)
 	}
 
-	// Use the script name from Replacement if set (e.g. "replaceHeader"),
-	// otherwise generate from pattern
 	scriptName := rw.Replacement
 	if scriptName == "" {
 		scriptName = sanitizeName(rw.Pattern)
+	}
+
+	// Cron scripts use a different Surge output format
+	if rw.ScriptType == "cron" {
+		cronexp := rw.CronExp
+		if cronexp == "" {
+			cronexp = "0 0 * * *"
+		}
+		out.Scripts = append(out.Scripts,
+			fmt.Sprintf("%s = type=cron, cronexp=%s, script-path=%s, timeout=%d%s",
+				scriptName, cronexp, rw.ScriptPath, timeout, argStr))
+		return
 	}
 
 	out.Scripts = append(out.Scripts,
@@ -409,7 +421,11 @@ func (p *Parser) formatSurgeOutput(out surgeOutput) string {
 
 	if len(out.MITM) > 0 {
 		sb.WriteString("[MITM]\n")
-		sb.WriteString("hostname = %APPEND% " + strings.Join(out.MITM, ", ") + "\n")
+		hnKey := "hostname"
+		if out.ConditionalMITMKey != "" {
+			hnKey = out.ConditionalMITMKey
+		}
+		sb.WriteString(hnKey + " = %APPEND% " + strings.Join(out.MITM, ", ") + "\n")
 	}
 
 	return sb.String()
@@ -626,6 +642,16 @@ func (p *Parser) convertLoonScript(rw ParsedRewrite) string {
 		scriptName = sanitizeName(rw.Pattern)
 	}
 
+	// Loon cron format: cron "expression" script-path=..., tag=name
+	if rw.ScriptType == "cron" {
+		cronexp := rw.CronExp
+		if cronexp == "" {
+			cronexp = "0 0 * * *"
+		}
+		cronexp = strings.ReplaceAll(cronexp, `"`, "")
+		return fmt.Sprintf(`cron "%s" script-path=%s, timeout=%d, tag=%s`, cronexp, rw.ScriptPath, timeout, scriptName)
+	}
+
 	var opts []string
 	opts = append(opts, fmt.Sprintf("script-path=%s", rw.ScriptPath))
 	opts = append(opts, fmt.Sprintf("timeout=%d", timeout))
@@ -655,6 +681,7 @@ func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, arg
 		out.MetaExtra = append(out.MetaExtra, mod.MetaExtra...)
 		out.SgArg = append(out.SgArg, mod.SgArg...)
 		out.BodyRewrites = append(out.BodyRewrites, mod.BodyRewrites...)
+		out.ConditionalMITMKey = mod.ConditionalMITMKey
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 
