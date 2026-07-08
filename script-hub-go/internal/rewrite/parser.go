@@ -207,6 +207,17 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 		// Apply jsDelivr conversion
 		modules[i].Scripts = ApplyJsDelivr(modules[i].Scripts, isTrue(input.Arguments["jsDelivr"]))
 
+		// Apply jsc/jsc2 script-path forwarding
+		modules[i].Scripts = ApplyJsc(
+			modules[i].Scripts,
+			input.Arguments["jsc"], input.Arguments["jsc2"],
+			appShortName(input.TargetApp), input.Arguments["headers"],
+			isTrue(input.Arguments["compatibilityOnly"]),
+			input.Arguments["prepend"],
+			input.Arguments["evalScriptori"], input.Arguments["evalScriptmodi"],
+			input.Arguments["evalUrlori"], input.Arguments["evalUrlmodi"],
+		)
+
 		// Apply MITM modifications
 		modules[i].MITM = ApplyMITMAdditions(modules[i].MITM, input.Arguments["hnadd"])
 		modules[i].MITM = ApplyMITMDeletions(modules[i].MITM, input.Arguments["hndel"])

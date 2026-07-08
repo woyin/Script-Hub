@@ -288,6 +288,80 @@ func ApplyJsDelivr(scripts []ParsedRewrite, enabled bool) []ParsedRewrite {
 	return scripts
 }
 
+// ApplyJsc wraps matching script paths into a Script Hub convert URL,
+// mirroring Rewrite-Parser.js jsc/jsc2: a matching script-path is rewritten to
+// http://script.hub/convert/_start_/{path}/_end_/_yuliu_.js?type=_js_from_-script&target={app}-script[&wrap_response=true]&headers=...
+// jsc2 takes precedence over jsc when both match.
+func ApplyJsc(scripts []ParsedRewrite, jsc, jsc2, app, headers string, compatibilityOnly bool, prepend, evOri, evModi, evUrlOri, evUrlModi string) []ParsedRewrite {
+	jscItems := getArgArr(jsc)
+	jsc2Items := getArgArr(jsc2)
+	if len(jscItems) == 0 && len(jsc2Items) == 0 {
+		return scripts
+	}
+	for i := range scripts {
+		path := scripts[i].ScriptPath
+		if path == "" {
+			continue
+		}
+		jscStatus := matchAny(path, jscItems)
+		jsc2Status := matchAny(path, jsc2Items)
+		if jsc2Status {
+			jscStatus = false
+		}
+		if !jscStatus && !jsc2Status {
+			continue
+		}
+		suffix := "/_end_/_yuliu_.js?type=_js_from_-script&target=" + app + "-script"
+		if jsc2Status {
+			suffix += "&wrap_response=true"
+		}
+		if headers != "" {
+			suffix += "&headers=" + urlEncode(headers)
+		}
+		if compatibilityOnly {
+			suffix += "&compatibilityOnly=true"
+		}
+		if prepend != "" {
+			suffix += "&prepend=" + urlEncode(prepend)
+		}
+		if evOri != "" {
+			suffix += "&evalScriptori=" + urlEncode(evOri)
+		}
+		if evModi != "" {
+			suffix += "&evalScriptmodi=" + urlEncode(evModi)
+		}
+		if evUrlOri != "" {
+			suffix += "&evalUrlori=" + urlEncode(evUrlOri)
+		}
+		if evUrlModi != "" {
+			suffix += "&evalUrlmodi=" + urlEncode(evUrlModi)
+		}
+		scripts[i].ScriptPath = "http://script.hub/convert/_start_/" + path + suffix
+	}
+	return scripts
+}
+
+// matchAny reports whether s contains any of the items.
+func matchAny(s string, items []string) bool {
+	for _, it := range items {
+		if strings.Contains(s, it) {
+			return true
+		}
+	}
+	return false
+}
+
+// urlEncode percent-encodes a string for use in a query parameter.
+func urlEncode(s string) string {
+	return strings.ReplaceAll(
+		strings.ReplaceAll(
+			strings.ReplaceAll(
+				strings.ReplaceAll(s, "%", "%25"),
+			"&", "%26"),
+		" ", "%20"),
+		"?", "%3F")
+}
+
 // jsDelivrConvert converts a GitHub raw URL to jsDelivr CDN URL.
 func jsDelivrConvert(urlStr string) string {
 	if urlStr == "" {
@@ -416,6 +490,24 @@ func ApplySniPm(rules []string, sni, pm string) []string {
 		}
 	}
 	return rules
+}
+
+// appShortName maps a target app string to the short name used in jsc convert
+// URLs: surge-module→surge, loon-plugin→loon, stash-stoverride→stash,
+// shadowrocket-module→shadowrocket. Falls back to the input lowercased.
+func appShortName(targetApp string) string {
+	t := strings.ToLower(targetApp)
+	switch {
+	case strings.Contains(t, "shadowrocket"):
+		return "shadowrocket"
+	case strings.Contains(t, "surge"):
+		return "surge"
+	case strings.Contains(t, "loon"):
+		return "loon"
+	case strings.Contains(t, "stash"):
+		return "stash"
+	}
+	return t
 }
 
 // isTrue checks if a string represents a truthy value.

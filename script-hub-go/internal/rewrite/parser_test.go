@@ -157,3 +157,28 @@ func TestMetaExtraPassthrough(t *testing.T) {
 		t.Fatalf("meta extra not preserved:\n%s", out)
 	}
 }
+
+func TestApplyJsc(t *testing.T) {
+	mk := func() []ParsedRewrite { return []ParsedRewrite{{ScriptPath: "https://example.com/foo.js"}} }
+
+	out := ApplyJsc(mk(), "foo", "", "surge", "", false, "", "", "", "", "")
+	if !strings.HasPrefix(out[0].ScriptPath, "http://script.hub/convert/_start_/https://example.com/foo.js") {
+		t.Fatalf("jsc path not wrapped: %s", out[0].ScriptPath)
+	}
+	if !strings.Contains(out[0].ScriptPath, "target=surge-script") {
+		t.Fatalf("jsc target missing: %s", out[0].ScriptPath)
+	}
+	if strings.Contains(out[0].ScriptPath, "wrap_response=true") {
+		t.Fatalf("jsc should not add wrap_response: %s", out[0].ScriptPath)
+	}
+	// jsc2 adds wrap_response
+	out = ApplyJsc(mk(), "", "foo", "surge", "", false, "", "", "", "", "")
+	if !strings.Contains(out[0].ScriptPath, "wrap_response=true") {
+		t.Fatalf("jsc2 wrap_response missing: %s", out[0].ScriptPath)
+	}
+	// non-matching keyword: unchanged
+	out = ApplyJsc(mk(), "bar", "", "surge", "", false, "", "", "", "", "")
+	if out[0].ScriptPath != "https://example.com/foo.js" {
+		t.Fatalf("non-matching jsc should be unchanged: %s", out[0].ScriptPath)
+	}
+}
