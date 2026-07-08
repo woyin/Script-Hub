@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"regexp"
 	"strings"
 
@@ -18,7 +17,6 @@ type ParseInput struct {
 	URLs      []string
 	TargetApp string
 	Arguments map[string]string
-	Headers   http.Header
 }
 
 // ParseOutput contains the parsed and converted rule output.
@@ -53,12 +51,13 @@ func NewParser(cfg *config.Config) *Parser {
 
 // ruleLine represents a single parsed rule line.
 type ruleLine struct {
-	RuleType string
-	Value    string
-	NoResolve bool
-	ExtMatch  string
-	Raw      string
-	Excluded bool
+	RuleType   string
+	Value      string
+	NoResolve  bool
+	ExtMatch   string
+	Policy     string
+	Raw        string
+	Excluded   bool
 	Unsupported bool
 }
 
@@ -262,6 +261,37 @@ func (p *Parser) parseRuleLine(line string, ipNoResolve bool, input ParseInput) 
 		}
 	}
 
+	pm := input.Arguments["pm"]
+	if pm != "" {
+		pmItems := strings.Split(pm, "+")
+		for _, item := range pmItems {
+			if strings.Contains(ruleValue, item) {
+				if rl.ExtMatch != "" {
+					rl.ExtMatch += ",pre-matching"
+				} else {
+					rl.ExtMatch = ",pre-matching"
+				}
+			}
+		}
+	}
+
+	policy := input.Arguments["policy"]
+	if policy != "" {
+		hasPolicy := false
+		if len(parts) >= 3 {
+			third := strings.TrimSpace(parts[2])
+			thirdLower := strings.ToLower(third)
+			if thirdLower != "" && thirdLower != "no-resolve" &&
+				!strings.Contains(thirdLower, "extended-matching") &&
+				!strings.Contains(thirdLower, "pre-matching") {
+				hasPolicy = true
+			}
+		}
+		if !hasPolicy {
+			rl.Policy = policy
+		}
+	}
+
 	return rl
 }
 
@@ -438,15 +468,17 @@ func formatRuleLine(rl ruleLine, target string) string {
 		noResolve = ",no-resolve"
 	}
 	extMatch := rl.ExtMatch
-	return fmt.Sprintf("%s,%s%s%s", rl.RuleType, rl.Value, noResolve, extMatch)
+	policy := ""
+	if rl.Policy != "" {
+		policy = "," + rl.Policy
+	}
+	return fmt.Sprintf("%s,%s%s%s%s", rl.RuleType, rl.Value, noResolve, extMatch, policy)
 }
 
 // formatSurgeRule formats a rule for Surge/Shadowrocket.
 func formatSurgeRule(rl ruleLine) string {
 	ruleType := strings.ToUpper(rl.RuleType)
-	// Surge uses PROCESS-NAME instead of PROCESS-PATH
 	ruleType = strings.ReplaceAll(ruleType, "PROCESS-PATH", "PROCESS-NAME")
-	// Surge uses DEST-PORT instead of DST-PORT
 	ruleType = strings.ReplaceAll(ruleType, "DST-PORT", "DEST-PORT")
 
 	noResolve := ""
@@ -454,20 +486,23 @@ func formatSurgeRule(rl ruleLine) string {
 		noResolve = ",no-resolve"
 	}
 	extMatch := rl.ExtMatch
-	return fmt.Sprintf("%s,%s%s%s", ruleType, rl.Value, noResolve, extMatch)
+	policy := ""
+	if rl.Policy != "" {
+		policy = "," + rl.Policy
+	}
+	return fmt.Sprintf("%s,%s%s%s%s", ruleType, rl.Value, noResolve, extMatch, policy)
 }
 
 // formatLoonRule formats a rule for Loon.
 func formatLoonRule(rl ruleLine) string {
 	ruleType := strings.ToUpper(rl.RuleType)
-	// Loon doesn't support some types
 	unsupported := map[string]bool{
-		"DEST-PORT":   true,
-		"PROTOCOL":    true,
+		"DEST-PORT":    true,
+		"PROTOCOL":     true,
 		"PROCESS-NAME": true,
-		"OR":          true,
-		"AND":         true,
-		"NOT":         true,
+		"OR":           true,
+		"AND":          true,
+		"NOT":          true,
 	}
 	if unsupported[ruleType] {
 		return ""
@@ -477,14 +512,17 @@ func formatLoonRule(rl ruleLine) string {
 	if rl.NoResolve {
 		noResolve = ",no-resolve"
 	}
-	return fmt.Sprintf("%s,%s%s", ruleType, rl.Value, noResolve)
+	policy := ""
+	if rl.Policy != "" {
+		policy = "," + rl.Policy
+	}
+	return fmt.Sprintf("%s,%s%s%s", ruleType, rl.Value, noResolve, policy)
 }
 
 // formatStashRule formats a rule for Stash.
 func formatStashRule(rl ruleLine) string {
 	ruleType := strings.ToUpper(rl.RuleType)
 
-	// Determine process type
 	if strings.HasPrefix(ruleType, "PROCESS") {
 		if strings.Contains(rl.Value, "/") {
 			ruleType = "PROCESS-PATH"
@@ -497,7 +535,11 @@ func formatStashRule(rl ruleLine) string {
 	if rl.NoResolve {
 		noResolve = ",no-resolve"
 	}
-	return fmt.Sprintf("  - %s,%s%s", ruleType, rl.Value, noResolve)
+	policy := ""
+	if rl.Policy != "" {
+		policy = "," + rl.Policy
+	}
+	return fmt.Sprintf("  - %s,%s%s%s", ruleType, rl.Value, noResolve, policy)
 }
 
 // normalizeRuleType normalizes rule type names across platforms.

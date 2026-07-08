@@ -10,14 +10,16 @@ import (
 const scriptHubRawBase = "https://raw.githubusercontent.com/Script-Hub-Org/Script-Hub/main"
 
 type surgeOutput struct {
-	URLRewrites    []string
-	HeaderRewrites []string
-	Scripts        []string
-	MapLocal       []string
-	Rules          []string
-	MITM           []string
-	Name           string
-	Desc           string
+	URLRewrites     []string
+	HeaderRewrites  []string
+	Scripts         []string
+	MapLocal        []string
+	Rules           []string
+	MITM            []string
+	ForceHTTPHosts  []string
+	Name            string
+	Desc            string
+	Icon            string
 }
 
 // convertModules converts parsed modules to the target app format.
@@ -40,10 +42,13 @@ func (p *Parser) convertModules(modules []ParsedModule, targetApp string, args m
 
 func (p *Parser) convertToSurgeFormat(modules []ParsedModule, target string, args map[string]string) string {
 	out := surgeOutput{}
+	synMitm := isTrue(args["synMitm"])
+	delComments := isTrue(args["del"])
 
 	for _, mod := range modules {
 		out.Name = mod.Name
 		out.Desc = mod.Desc
+		out.Icon = mod.Icon
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 
@@ -56,6 +61,18 @@ func (p *Parser) convertToSurgeFormat(modules []ParsedModule, target string, arg
 	}
 
 	out.MITM = uniqueStrings(out.MITM)
+
+	if synMitm {
+		out.ForceHTTPHosts = append(out.ForceHTTPHosts, out.MITM...)
+	}
+
+	if delComments {
+		out.URLRewrites = filterCommented(out.URLRewrites)
+		out.HeaderRewrites = filterCommented(out.HeaderRewrites)
+		out.Scripts = filterCommented(out.Scripts)
+		out.Rules = filterCommented(out.Rules)
+	}
+
 	return p.formatSurgeOutput(out)
 }
 
@@ -172,6 +189,9 @@ func (p *Parser) formatSurgeOutput(out surgeOutput) string {
 	if out.Desc != "" {
 		sb.WriteString(fmt.Sprintf("#!desc=%s\n", out.Desc))
 	}
+	if out.Icon != "" {
+		sb.WriteString(fmt.Sprintf("#!icon=%s\n", out.Icon))
+	}
 	sb.WriteString("\n")
 
 	if len(out.Rules) > 0 {
@@ -219,6 +239,11 @@ func (p *Parser) formatSurgeOutput(out surgeOutput) string {
 		sb.WriteString("hostname = %APPEND% " + strings.Join(out.MITM, ", ") + "\n")
 	}
 
+	if len(out.ForceHTTPHosts) > 0 {
+		sb.WriteString("\n[Host]\n")
+		sb.WriteString("force-http-engine-hosts = " + strings.Join(out.ForceHTTPHosts, ", ") + "\n")
+	}
+
 	return sb.String()
 }
 
@@ -226,11 +251,13 @@ func (p *Parser) formatSurgeOutput(out surgeOutput) string {
 
 func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args map[string]string) string {
 	var rules, rewrites, scripts, mitm []string
-	var name, desc string
+	var name, desc, icon string
+	delComments := isTrue(args["del"])
 
 	for _, mod := range modules {
 		name = mod.Name
 		desc = mod.Desc
+		icon = mod.Icon
 		mitm = append(mitm, mod.MITM...)
 		rules = append(rules, mod.Rules...)
 
@@ -250,12 +277,21 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 
 	mitm = uniqueStrings(mitm)
 
+	if delComments {
+		rewrites = filterCommented(rewrites)
+		scripts = filterCommented(scripts)
+		rules = filterCommented(rules)
+	}
+
 	var sb strings.Builder
 	if name != "" {
 		sb.WriteString(fmt.Sprintf("#!name=%s\n", name))
 	}
 	if desc != "" {
 		sb.WriteString(fmt.Sprintf("#!desc=%s\n", desc))
+	}
+	if icon != "" {
+		sb.WriteString(fmt.Sprintf("#!icon=%s\n", icon))
 	}
 	sb.WriteString("\n")
 
@@ -401,10 +437,12 @@ func (p *Parser) convertLoonScript(rw ParsedRewrite) string {
 
 func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, args map[string]string) string {
 	out := surgeOutput{}
+	delComments := isTrue(args["del"])
 
 	for _, mod := range modules {
 		out.Name = mod.Name
 		out.Desc = mod.Desc
+		out.Icon = mod.Icon
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 
@@ -417,6 +455,18 @@ func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, arg
 	}
 
 	out.MITM = uniqueStrings(out.MITM)
+
+	if isTrue(args["synMitm"]) {
+		out.ForceHTTPHosts = append(out.ForceHTTPHosts, out.MITM...)
+	}
+
+	if delComments {
+		out.URLRewrites = filterCommented(out.URLRewrites)
+		out.HeaderRewrites = filterCommented(out.HeaderRewrites)
+		out.Scripts = filterCommented(out.Scripts)
+		out.Rules = filterCommented(out.Rules)
+	}
+
 	return p.formatStashOutput(out)
 }
 
@@ -428,6 +478,9 @@ func (p *Parser) formatStashOutput(out surgeOutput) string {
 	}
 	if out.Desc != "" {
 		sb.WriteString(fmt.Sprintf("#!desc=%s\n", out.Desc))
+	}
+	if out.Icon != "" {
+		sb.WriteString(fmt.Sprintf("#!icon=%s\n", out.Icon))
 	}
 	sb.WriteString("\n")
 
@@ -680,6 +733,17 @@ func uniqueStrings(s []string) []string {
 		if v != "" && !seen[v] {
 			seen[v] = true
 			result = append(result, v)
+		}
+	}
+	return result
+}
+
+func filterCommented(lines []string) []string {
+	var result []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") {
+			result = append(result, line)
 		}
 	}
 	return result

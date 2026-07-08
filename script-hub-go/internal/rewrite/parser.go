@@ -3,10 +3,10 @@ package rewrite
 import (
 	"context"
 	"log"
-	"net/http"
 	"strings"
 
 	"github.com/script-hub-org/script-hub/internal/config"
+	"github.com/script-hub-org/script-hub/internal/eval"
 	"github.com/script-hub-org/script-hub/internal/httpclient"
 	"github.com/script-hub-org/script-hub/internal/types"
 )
@@ -17,7 +17,6 @@ type ParseInput struct {
 	SourceType string
 	TargetApp  string
 	Arguments  map[string]string
-	Headers    http.Header
 }
 
 // ParseOutput contains the parsed and converted rewrite output.
@@ -67,11 +66,13 @@ type ParsedRewrite struct {
 	EchoCT       string // For echo-response: content type
 	EchoURL      string // For echo-response: echo data URL
 	ScriptPath   string
-	ScriptType   string // http-request, http-response
+	ScriptType   string // http-request, http-response, cron
 	Arguments    string
 	Timeout      int
 	RequiresBody bool
 	BodyType     string // request-body, response-body
+	CronExp      string // Cron expression for scheduled scripts
+	Engine       string // Script engine (Surge-specific: javascript, wasm, etc.)
 	MITM         []string
 }
 
@@ -146,6 +147,10 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 		}, nil
 	}
 
+	// Apply eval operations on original content (before conversion)
+	evalParams := eval.EvalParamsFromArgs(input.Arguments)
+	body = eval.ApplyBeforeConversion(ctx, body, evalParams, p.client)
+
 	// Parse based on source type
 	var modules []ParsedModule
 	switch input.SourceType {
@@ -161,8 +166,38 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 		modules = p.parseAutoDetect(body, input.Arguments)
 	}
 
+	// Apply parameter modifications to parsed modules
+	for i := range modules {
+		// Apply metadata overrides (name, desc, icon)
+		ApplyMetadataOverrides(&modules[i], input.Arguments)
+
+		// Apply script-level modifications
+		modules[i].Scripts = ApplyArgModification(modules[i].Scripts, input.Arguments["arg"], input.Arguments["argv"])
+		modules[i].Scripts = ApplyScriptNameModification(modules[i].Scripts, input.Arguments["njsnametarget"], input.Arguments["njsname"])
+		modules[i].Scripts = ApplyTimeoutModification(modules[i].Scripts, input.Arguments["timeoutt"], input.Arguments["timeoutv"])
+		modules[i].Scripts = ApplyEngineModification(modules[i].Scripts, input.Arguments["enginet"], input.Arguments["enginev"])
+		modules[i].Scripts = ApplyCronModification(modules[i].Scripts, input.Arguments["cron"], input.Arguments["cronexp"])
+
+		// Apply jsDelivr conversion
+		modules[i].Scripts = ApplyJsDelivr(modules[i].Scripts, isTrue(input.Arguments["jsDelivr"]))
+
+		// Apply MITM modifications
+		modules[i].MITM = ApplyMITMAdditions(modules[i].MITM, input.Arguments["hnadd"])
+		modules[i].MITM = ApplyMITMDeletions(modules[i].MITM, input.Arguments["hndel"])
+		modules[i].MITM = ApplyMITNRegexDeletions(modules[i].MITM, input.Arguments["hnregdel"])
+
+		// Apply policy to rules
+		modules[i].Rules = ApplyPolicyToRules(modules[i].Rules, input.Arguments["policy"])
+
+		// Deduplicate MITM
+		modules[i].MITM = uniqueStrings(modules[i].MITM)
+	}
+
 	// Convert to target format
 	output := p.convertModules(modules, input.TargetApp, input.Arguments)
+
+	// Apply eval operations on converted content (after conversion)
+	output = eval.ApplyAfterConversion(ctx, output, evalParams, p.client)
 
 	return ParseOutput{
 		Content: output,

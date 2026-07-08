@@ -52,7 +52,6 @@ func (s *Server) rewriteParserHandler(w http.ResponseWriter, r *http.Request) {
 		SourceType: queryParams["type"],
 		TargetApp:  queryParams["target"],
 		Arguments:  queryParams,
-		Headers:    r.Header,
 	}
 
 	output, err := parser.Parse(r.Context(), input)
@@ -78,7 +77,6 @@ func (s *Server) ruleParserHandler(w http.ResponseWriter, r *http.Request) {
 		URLs:      decodeReqArr(req),
 		TargetApp: queryParams["target"],
 		Arguments: queryParams,
-		Headers:   r.Header,
 	}
 
 	output, err := parser.Parse(r.Context(), input)
@@ -109,14 +107,13 @@ func (s *Server) scriptConverterHandler(w http.ResponseWriter, r *http.Request) 
 
 	conv := converter.NewConverter(s.cfg)
 	input := converter.ConvertInput{
-		URL:            req,
-		LocalText:      queryParams["localtext"],
-		SourceType:     queryParams["type"],
-		TargetApp:      queryParams["target-app"],
-		Arguments:      queryParams,
-		KeepHeader:     queryParams["keepHeader"] == "true",
-		JsDelivr:       queryParams["jsDelivr"],
-		RequestHeaders: r.Header,
+		URL:        req,
+		LocalText:  queryParams["localtext"],
+		SourceType: queryParams["type"],
+		TargetApp:  queryParams["target-app"],
+		Arguments:  queryParams,
+		KeepHeader: queryParams["keepHeader"] == "true",
+		JsDelivr:   queryParams["jsDelivr"],
 	}
 
 	output, err := conv.Convert(r.Context(), input)
