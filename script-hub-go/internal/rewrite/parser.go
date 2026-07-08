@@ -54,6 +54,7 @@ const (
 	RewriteTypeRejectDrop
 	RewriteTypeMock
 	RewriteTypeMockRequestBody
+	RewriteTypeBodyRewrite
 	RewriteTypeScript
 	RewriteTypeHeaderRewrite
 	RewriteTypeURLRewrite
@@ -76,6 +77,7 @@ type ParsedRewrite struct {
 	MockHeader   string // header
 	MockBase64   bool   // mock-data-is-base64
 	MockIsLoon   bool   // Loon mock-response-body form
+	BodyRewrite  *BodyRewriteEntry // non-nil when parsed from body rewrite line
 	ScriptPath   string
 	ScriptType   string // http-request, http-response, cron
 	Arguments    string

@@ -236,6 +236,63 @@ func parseBodyRewriteSection(lines []string) []BodyRewriteEntry {
 	return entries
 }
 
+// qxJsonActionToBodyRewrite converts a QX json-add/del/replace action into
+// a BodyRewriteEntry with jq expressions, mirroring Rewrite-Parser.js logic.
+func qxJsonActionToBodyRewrite(pattern, httpType, action, suffix string) *BodyRewriteEntry {
+	jqType := httpType + "-jq"
+	fields := strings.Fields(suffix)
+
+	if strings.Contains(action, "json-del") {
+		// json-del: each field is a key to delete
+		var jqExprs []string
+		for _, f := range fields {
+			paths := parseJsonPath(f)
+			jqExprs = append(jqExprs, `'delpaths([`+paths+`])'`)
+		}
+		return &BodyRewriteEntry{Type: jqType, Regex: pattern, Value: strings.Join(jqExprs, " | ")}
+	}
+
+	if strings.Contains(action, "json-add") || strings.Contains(action, "json-replace") {
+		// json-add/replace: key value pairs
+		var jqExprs []string
+		for i := 0; i+1 < len(fields); i += 2 {
+			key := fields[i]
+			val := fields[i+1]
+			paths := parseJsonPath(key)
+			if strings.Contains(action, "json-replace") {
+				// conditional: if parent has key then setpath
+				parent := paths
+				if lastComma := strings.LastIndex(parent, ","); lastComma >= 0 {
+					parent = parent[:lastComma] + "]"
+				} else {
+					parent = "[]"
+				}
+				lastKey := key
+				if dot := strings.LastIndex(key, "."); dot >= 0 {
+					lastKey = key[dot+1:]
+				}
+				lastKey = strings.Trim(lastKey, `[]'"`)
+				numCheck := ""
+				if _, err := fmt.Sscanf(lastKey, "%d"); err == nil {
+					numCheck = lastKey
+				} else {
+					numCheck = `"` + lastKey + `"`
+				}
+				jqExprs = append(jqExprs, `'if (getpath(`+parent+`) | has(`+numCheck+`)) then (setpath(`+paths+`; `+val+`)) else . end'`)
+			} else {
+				// json-add: setpath
+				jqExprs = append(jqExprs, `'setpath(`+paths+`; `+val+`)'`)
+			}
+		}
+		if len(jqExprs) == 0 {
+			return nil
+		}
+		return &BodyRewriteEntry{Type: jqType, Regex: pattern, Value: strings.Join(jqExprs, " | ")}
+	}
+
+	return nil
+}
+
 // parseArgumentsLine parses Surge #!arguments lines into SgArgument entries.
 // Supports two forms:
 //   - "#!arguments=key:value,key2:value2" (colon-separated)
@@ -350,7 +407,9 @@ func (p *Parser) parseQXRewrite(content string, args map[string]string) []Parsed
 		}
 		rw := parseQXLine(line)
 		if rw != nil {
-			if rw.Type == RewriteTypeRequestHeader || rw.Type == RewriteTypeResponseHeader ||
+			if rw.Type == RewriteTypeBodyRewrite && rw.BodyRewrite != nil {
+				module.BodyRewrites = append(module.BodyRewrites, *rw.BodyRewrite)
+			} else if rw.Type == RewriteTypeRequestHeader || rw.Type == RewriteTypeResponseHeader ||
 				rw.Type == RewriteTypeRequestBody || rw.Type == RewriteTypeResponseBody {
 				rw = qxRewriteToScript(rw, i)
 				module.Scripts = append(module.Scripts, *rw)
@@ -442,6 +501,60 @@ func parseQXLine(line string) *ParsedRewrite {
 
 	case "request-body", "response-body":
 		return parseQXHeaderBodyLine(rw, rwType, rest)
+
+	case "request-body-json-jq", "response-body-json-jq":
+		// QX: ^pattern url response-body-json-jq 'jq_expr'
+		rw.Type = RewriteTypeBodyRewrite
+		jqVal := strings.Join(words[1:], " ")
+		if !strings.HasPrefix(jqVal, "'") {
+			jqVal = "'" + jqVal + "'"
+		}
+		rw.BodyRewrite = &BodyRewriteEntry{
+			Type:  "http-" + strings.TrimSuffix(strings.TrimPrefix(rwType, "request-"), "request-") + "-jq",
+			Regex: rw.Pattern,
+			Value: jqVal,
+		}
+		// Derive correct type: request-body-json-jq → http-request-jq
+		if strings.HasPrefix(rwType, "request") {
+			rw.BodyRewrite.Type = "http-request-jq"
+		} else {
+			rw.BodyRewrite.Type = "http-response-jq"
+		}
+		return rw
+
+	case "jsonjq-request-body", "jsonjq-response-body":
+		// QX alternate form: ^pattern url jsonjq-response-body 'jq_expr'
+		rw.Type = RewriteTypeBodyRewrite
+		jqVal := strings.Join(words[1:], " ")
+		if !strings.HasPrefix(jqVal, "'") {
+			jqVal = "'" + jqVal + "'"
+		}
+		if strings.Contains(rwType, "request") {
+			rw.BodyRewrite = &BodyRewriteEntry{Type: "http-request-jq", Regex: rw.Pattern, Value: jqVal}
+		} else {
+			rw.BodyRewrite = &BodyRewriteEntry{Type: "http-response-jq", Regex: rw.Pattern, Value: jqVal}
+		}
+		return rw
+
+	case "request-body-replace-regex", "response-body-replace-regex",
+		"request-body-json-add", "request-body-json-del", "request-body-json-replace",
+		"response-body-json-add", "response-body-json-del", "response-body-json-replace":
+		// QX body rewrite with json actions or replace-regex
+		rw.Type = RewriteTypeBodyRewrite
+		suffix := strings.Join(words[1:], " ")
+		httpType := "http-request"
+		if strings.HasPrefix(rwType, "response") {
+			httpType = "http-response"
+		}
+		action := rwType // e.g. response-body-json-add
+		if strings.Contains(action, "json-add") || strings.Contains(action, "json-del") || strings.Contains(action, "json-replace") {
+			// Convert json-add/del/replace to jq expressions
+			rw.BodyRewrite = qxJsonActionToBodyRewrite(rw.Pattern, httpType, action, suffix)
+		} else {
+			// replace-regex: straightforward
+			rw.BodyRewrite = &BodyRewriteEntry{Type: httpType, Regex: rw.Pattern, Value: suffix}
+		}
+		return rw
 
 	case "echo-response":
 		rw.Type = RewriteTypeEchoResponse
