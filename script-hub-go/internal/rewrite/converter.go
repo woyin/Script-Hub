@@ -24,6 +24,7 @@ type surgeOutput struct {
 	Icon            string
 	CategoryKey     string
 	CategoryValue   string
+	MetaExtra       []string
 }
 
 // convertModules converts parsed modules to the target app format.
@@ -54,6 +55,7 @@ func (p *Parser) convertToSurgeFormat(modules []ParsedModule, target string, arg
 		out.Desc = mod.Desc
 		out.Icon = mod.Icon
 		out.CategoryKey, out.CategoryValue = CategoryForOutput(&mod, false)
+		out.MetaExtra = append(out.MetaExtra, mod.MetaExtra...)
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 
@@ -235,6 +237,9 @@ func (p *Parser) formatSurgeOutput(out surgeOutput) string {
 	if out.CategoryKey != "" && out.CategoryValue != "" {
 		sb.WriteString(fmt.Sprintf("#!%s=%s\n", out.CategoryKey, out.CategoryValue))
 	}
+	for _, m := range out.MetaExtra {
+		sb.WriteString(m + "\n")
+	}
 	sb.WriteString("\n")
 
 	if len(out.Rules) > 0 {
@@ -311,6 +316,7 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 	var rules, rewrites, scripts, mitm []string
 	var name, desc, icon string
 	var catKey, catValue string
+	var metaExtra []string
 	delComments := isTrue(args["del"])
 
 	for _, mod := range modules {
@@ -318,6 +324,7 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 		desc = mod.Desc
 		icon = mod.Icon
 		catKey, catValue = CategoryForOutput(&mod, true)
+		metaExtra = append(metaExtra, mod.MetaExtra...)
 		mitm = append(mitm, mod.MITM...)
 		rules = append(rules, mod.Rules...)
 
@@ -355,6 +362,9 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 	}
 	if catKey != "" && catValue != "" {
 		sb.WriteString(fmt.Sprintf("#!%s=%s\n", catKey, catValue))
+	}
+	for _, m := range metaExtra {
+		sb.WriteString(m + "\n")
 	}
 	sb.WriteString("\n")
 
@@ -508,6 +518,7 @@ func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, arg
 		out.Desc = mod.Desc
 		out.Icon = mod.Icon
 		out.CategoryKey, out.CategoryValue = CategoryForOutput(&mod, false)
+		out.MetaExtra = append(out.MetaExtra, mod.MetaExtra...)
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 
@@ -549,6 +560,9 @@ func (p *Parser) formatStashOutput(out surgeOutput) string {
 	}
 	if out.CategoryKey != "" && out.CategoryValue != "" {
 		sb.WriteString(fmt.Sprintf("#!%s=%s\n", out.CategoryKey, out.CategoryValue))
+	}
+	for _, m := range out.MetaExtra {
+		sb.WriteString(m + "\n")
 	}
 	sb.WriteString("\n")
 

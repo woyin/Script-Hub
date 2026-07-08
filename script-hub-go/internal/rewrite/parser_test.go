@@ -148,3 +148,12 @@ func TestCategoryOutput(t *testing.T) {
 		t.Fatalf("loon tag missing:\n%s", loonOut)
 	}
 }
+
+func TestMetaExtraPassthrough(t *testing.T) {
+	p := &Parser{}
+	mods := []ParsedModule{{MetaExtra: []string{"#!button=a=b", "#!toggle=true"}}}
+	out := p.convertToLoonFormat(mods, "loon", map[string]string{})
+	if !strings.Contains(out, "#!button=a=b") || !strings.Contains(out, "#!toggle=true") {
+		t.Fatalf("meta extra not preserved:\n%s", out)
+	}
+}

@@ -380,6 +380,8 @@ func (p *Parser) parseSurgeModule(content string, args map[string]string) []Pars
 			module.Category = strings.TrimPrefix(line, "#!category=")
 		} else if strings.HasPrefix(line, "#!keyword=") {
 			module.Keyword = strings.TrimPrefix(line, "#!keyword=")
+		} else if strings.HasPrefix(line, "#!") && strings.Contains(line, "=") {
+			module.MetaExtra = append(module.MetaExtra, line)
 		}
 	}
 
@@ -612,6 +614,9 @@ func (p *Parser) parseLoonPlugin(content string, args map[string]string) []Parse
 			module.Category = strings.TrimPrefix(line, "#!category=")
 		} else if strings.HasPrefix(line, "#!keyword=") {
 			module.Keyword = strings.TrimPrefix(line, "#!keyword=")
+		} else if strings.HasPrefix(line, "#!") && strings.Contains(line, "=") {
+			// Preserve other #!key=value metadata (e.g. Loon interactive buttons)
+			module.MetaExtra = append(module.MetaExtra, line)
 		}
 	}
 

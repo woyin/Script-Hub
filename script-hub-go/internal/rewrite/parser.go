@@ -93,6 +93,7 @@ type ParsedModule struct {
 	Hosts    []HostInfo
 	Category string
 	Keyword  string
+	MetaExtra []string // extra #!key=value lines (e.g. Loon interactive buttons)
 }
 
 // PanelInfo holds a Surge [Panel] entry parsed from script-name/title/content/style.
