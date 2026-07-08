@@ -286,3 +286,45 @@ func TestLoonMockResponseBody(t *testing.T) {
 		t.Fatalf("loon mock-response-body missing:\n%s", out)
 	}
 }
+func TestParseJsonPath(t *testing.T) {
+	cases := map[string]string{
+		"a.b.c":     `["a","b","c"]`,
+		"a[0].b":    `["a",0,"b"]`,
+		`a["x"][1]`: `["a","x",1]`,
+	}
+	for in, want := range cases {
+		got := parseJsonPath(in)
+		if got != want {
+			t.Errorf("parseJsonPath(%q) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+func TestParseBodyRewriteSection(t *testing.T) {
+	lines := []string{"http-response-jq ^api\\.com setpath([\"a\"]; 1)", "# comment", "http-request ^foo old new"}
+	entries := parseBodyRewriteSection(lines)
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	if entries[0].Type != "http-response-jq" || entries[0].Regex != "^api\\.com" {
+		t.Fatalf("entry0 wrong: %+v", entries[0])
+	}
+}
+
+func TestSurgeBodyRewriteOutput(t *testing.T) {
+	p := &Parser{}
+	mods := []ParsedModule{{BodyRewrites: []BodyRewriteEntry{{Type: "http-response-jq", Regex: "^api", Value: "setpath([\"a\"];1)"}}}}
+	out := p.convertToSurgeFormat(mods, "surge", map[string]string{})
+	if !strings.Contains(out, "[Body Rewrite]") || !strings.Contains(out, "http-response-jq ^api") {
+		t.Fatalf("surge body rewrite missing:\n%s", out)
+	}
+}
+
+func TestLoonBodyRewriteOutput(t *testing.T) {
+	p := &Parser{}
+	mods := []ParsedModule{{BodyRewrites: []BodyRewriteEntry{{Type: "http-response-jq", Regex: "^api", Value: "'jq'"}}}}
+	out := p.convertToLoonFormat(mods, "loon", map[string]string{})
+	if !strings.Contains(out, "^api response-body-json-jq 'jq'") {
+		t.Fatalf("loon body rewrite missing:\n%s", out)
+	}
+}

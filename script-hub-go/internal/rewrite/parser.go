@@ -104,6 +104,14 @@ type ParsedModule struct {
 	Keyword  string
 	MetaExtra []string // extra #!key=value lines (e.g. Loon interactive buttons)
 	SgArg    []SgArgument
+	BodyRewrites []BodyRewriteEntry
+}
+
+// BodyRewriteEntry holds a parsed body rewrite rule (jq or replace-regex).
+type BodyRewriteEntry struct {
+	Type   string // http-request, http-response, http-request-jq, http-response-jq
+	Regex  string
+	Value  string
 }
 
 // SgArgument holds a Surge module #!arguments entry.

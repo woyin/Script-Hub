@@ -1,6 +1,7 @@
 package rewrite
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -187,6 +188,52 @@ func loonMockContentType(dt string) string {
 		return "Content-Type:application/x-www-form-urlencoded"
 	}
 	return ""
+}
+
+// parseJsonPath splits a dotted/bracket JSON path into a jq path array string,
+// mirroring Rewrite-Parser.js parseJsonPath. Returns a JSON array literal.
+// RE2 has no backreferences, so quoted-bracket forms are matched explicitly
+// for single and double quotes.
+func parseJsonPath(path string) string {
+	path = strings.TrimSpace(path)
+	re := regexp.MustCompile(`\.?([^\.\[\]]+)|\["([^"]*)"\]|\['([^']*)'\]|\[(\d+)\]`)
+	var parts []string
+	for _, m := range re.FindAllStringSubmatch(path, -1) {
+		switch {
+		case m[1] != "":
+			parts = append(parts, jsonString(m[1]))
+		case m[2] != "":
+			parts = append(parts, jsonString(m[2]))
+		case m[3] != "":
+			parts = append(parts, jsonString(m[3]))
+		case m[4] != "":
+			parts = append(parts, m[4])
+		}
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+// jsonString returns a JSON-quoted string.
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// parseBodyRewriteSection parses a Surge [Body Rewrite] section into entries.
+func parseBodyRewriteSection(lines []string) []BodyRewriteEntry {
+	var entries []BodyRewriteEntry
+	lineRe := regexp.MustCompile(`^((?:http-request|http-response)(?:-jq)?)\s+?(.*?)\s+?(.*?)$`)
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		m := lineRe.FindStringSubmatch(line)
+		if len(m) == 4 {
+			entries = append(entries, BodyRewriteEntry{Type: m[1], Regex: m[2], Value: m[3]})
+		}
+	}
+	return entries
 }
 
 // parseArgumentsLine parses Surge #!arguments lines into SgArgument entries.
@@ -662,6 +709,11 @@ func (p *Parser) parseSurgeModule(content string, args map[string]string) []Pars
 				module.Hosts = append(module.Hosts, *h)
 			}
 		}
+	}
+
+	// [Body Rewrite] section (Surge)
+	if bodyRewrites, ok := sections["Body Rewrite"]; ok {
+		module.BodyRewrites = append(module.BodyRewrites, parseBodyRewriteSection(bodyRewrites)...)
 	}
 
 	// [Rule] section

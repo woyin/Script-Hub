@@ -26,6 +26,7 @@ type surgeOutput struct {
 	CategoryValue   string
 	MetaExtra       []string
 	SgArg           []SgArgument
+	BodyRewrites    []BodyRewriteEntry
 }
 
 // convertModules converts parsed modules to the target app format.
@@ -58,6 +59,7 @@ func (p *Parser) convertToSurgeFormat(modules []ParsedModule, target string, arg
 		out.CategoryKey, out.CategoryValue = CategoryForOutput(&mod, false)
 		out.MetaExtra = append(out.MetaExtra, mod.MetaExtra...)
 		out.SgArg = append(out.SgArg, mod.SgArg...)
+		out.BodyRewrites = append(out.BodyRewrites, mod.BodyRewrites...)
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 
@@ -212,6 +214,26 @@ func (p *Parser) classifySurgeRewrite(rw ParsedRewrite, out *surgeOutput, args m
 	}
 }
 
+// loonBodyRewrite converts a BodyRewriteEntry to a Loon [Rewrite] line,
+// mirroring Rewrite-Parser.js type2 mapping.
+func loonBodyRewrite(br BodyRewriteEntry) string {
+	type2 := ""
+	switch br.Type {
+	case "http-request":
+		type2 = "request-body-replace-regex"
+	case "http-response":
+		type2 = "response-body-replace-regex"
+	case "http-request-jq":
+		type2 = "request-body-json-jq"
+	case "http-response-jq":
+		type2 = "response-body-json-jq"
+	}
+	if type2 == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s %s %s", br.Regex, type2, br.Value)
+}
+
 // applyArgumentsTemplate rewrites {key} placeholders in the body per the
 // Surge #!arguments template system:
 //   - Surge/Shadowrocket: {key} → {{{key}}} (Surge toggle template)
@@ -349,6 +371,14 @@ func (p *Parser) formatSurgeOutput(out surgeOutput) string {
 		sb.WriteString("\n")
 	}
 
+	if len(out.BodyRewrites) > 0 {
+		sb.WriteString("[Body Rewrite]\n")
+		for _, br := range out.BodyRewrites {
+			sb.WriteString(fmt.Sprintf("%s %s %s\n", br.Type, br.Regex, br.Value))
+		}
+		sb.WriteString("\n")
+	}
+
 	if len(out.Scripts) > 0 {
 		sb.WriteString("[Script]\n")
 		for _, s := range out.Scripts {
@@ -393,6 +423,7 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 	var catKey, catValue string
 	var metaExtra []string
 	var sgArg []SgArgument
+	var bodyRewrites []BodyRewriteEntry
 	delComments := isTrue(args["del"])
 
 	for _, mod := range modules {
@@ -402,6 +433,7 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 		catKey, catValue = CategoryForOutput(&mod, true)
 		metaExtra = append(metaExtra, mod.MetaExtra...)
 		sgArg = append(sgArg, mod.SgArg...)
+		bodyRewrites = append(bodyRewrites, mod.BodyRewrites...)
 		mitm = append(mitm, mod.MITM...)
 		rules = append(rules, mod.Rules...)
 
@@ -415,6 +447,12 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 			converted := p.convertLoonScript(rw)
 			if converted != "" {
 				scripts = append(scripts, converted)
+			}
+		}
+		// Body rewrite → Loon [Rewrite] entries
+		for _, br := range mod.BodyRewrites {
+			if rw := loonBodyRewrite(br); rw != "" {
+				rewrites = append(rewrites, rw)
 			}
 		}
 	}
@@ -616,6 +654,7 @@ func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, arg
 		out.CategoryKey, out.CategoryValue = CategoryForOutput(&mod, false)
 		out.MetaExtra = append(out.MetaExtra, mod.MetaExtra...)
 		out.SgArg = append(out.SgArg, mod.SgArg...)
+		out.BodyRewrites = append(out.BodyRewrites, mod.BodyRewrites...)
 		out.MITM = append(out.MITM, mod.MITM...)
 		out.Rules = append(out.Rules, mod.Rules...)
 
@@ -712,6 +751,14 @@ func (p *Parser) formatStashOutput(out surgeOutput) string {
 		if len(out.MapLocal) > 0 {
 			for _, r := range out.MapLocal {
 				sb.WriteString("  # map-local: " + r + "\n")
+			}
+			sb.WriteString("\n")
+		}
+
+		if len(out.BodyRewrites) > 0 {
+			sb.WriteString("  body-rewrite:\n")
+			for _, br := range out.BodyRewrites {
+				sb.WriteString(fmt.Sprintf("    - %s %s %s\n", br.Type, br.Regex, br.Value))
 			}
 			sb.WriteString("\n")
 		}
