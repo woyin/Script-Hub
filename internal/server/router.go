@@ -1,3 +1,7 @@
+// router.go 实现 Script Hub 的 URL 路由分发。
+// 使用全捕获处理器配合手动 URL 分发，因为 URL 中可能包含 "://" 字符，
+// chi 的模式匹配器无法正确处理。
+// 路由逻辑与 JS 版 scriptMap.js 中的正则路由一一对应。
 package server
 
 import (
@@ -7,14 +11,15 @@ import (
 	"github.com/script-hub-org/script-hub/internal/config"
 )
 
-// setupRoutes uses a catch-all handler with manual URL dispatching,
-// matching the original scriptMap.js pattern-based routing logic.
-// Chi's pattern matcher cannot handle URLs with `://` in path segments.
+// setupRoutes 设置全捕获路由，将所有请求转发到 dispatchHandler。
 func (s *Server) setupRoutes() {
 	s.router.Get("/*", s.dispatchHandler)
 }
 
-// dispatchHandler implements the same routing logic as the original scriptMap.js.
+// dispatchHandler 实现与 JS 版 scriptMap.js 相同的路由逻辑：
+//   - /、/edit/*、/reload → 前端页面
+//   - /file/_start_/...   → 重写/规则解析器
+//   - /convert/...         → 脚本转换器
 func (s *Server) dispatchHandler(w http.ResponseWriter, r *http.Request) {
 	uri := r.URL.RequestURI()
 
@@ -33,8 +38,10 @@ func (s *Server) dispatchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// fileHandler dispatches between rewrite parser and rule parser
-// based on the "type" query parameter.
+// fileHandler 根据 "type" 查询参数分发到重写解析器或规则解析器。
+// 对应 JS 版 scriptMap.js 中的类型匹配：
+//   - qx-rewrite / surge-module / loon-plugin / all-module → Rewrite-Parser
+//   - rule-set → rule-parser
 func (s *Server) fileHandler(w http.ResponseWriter, r *http.Request) {
 	queryType := r.URL.Query().Get("type")
 	switch {
@@ -50,12 +57,17 @@ func (s *Server) fileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// buildScriptHubURL constructs the internal script.hub URL from the request.
+// ── URL 解析工具函数 ──
+// 以下函数实现了与 JS 版 Rewrite-Parser.js 相同的 URL 解析逻辑。
+
+// buildScriptHubURL 将 HTTP 请求的 URL 重构为 "http://script.hub" 格式，
+// 以便与 JS 版的路由匹配逻辑一致。
 func buildScriptHubURL(r *http.Request) string {
 	return "http://script.hub" + r.URL.RequestURI()
 }
 
-// extractReqFromURL extracts the URL-encoded request path between /file/_start_/ and /_end_/ .
+// extractReqFromURL 从 URL 中提取 /file/_start_/ 和 /_end_/ 之间的编码路径。
+// 返回编码后的请求路径和已分割的数组（当 URL 包含 😂 分隔符时）。
 func extractReqFromURL(rawURL string) (string, []string) {
 	parts := strings.SplitN(rawURL, "/file/_start_/", 2)
 	if len(parts) < 2 {
@@ -68,13 +80,14 @@ func extractReqFromURL(rawURL string) (string, []string) {
 	}
 	req := endParts[0]
 
+	// 😂 表情（%F0%9F%98%82）用作多 URL 分隔符
 	if strings.Contains(req, "%F0%9F%98%82") {
 		return req, strings.Split(req, "%F0%9F%98%82")
 	}
 	return req, []string{req}
 }
 
-// extractURLArg extracts the part after /_end_/ from the URL.
+// extractURLArg 提取 /_end_/ 之后的 URL 部分（查询参数区域）。
 func extractURLArg(rawURL string) string {
 	parts := strings.SplitN(rawURL, "/_end_/", 2)
 	if len(parts) < 2 {
@@ -83,7 +96,7 @@ func extractURLArg(rawURL string) string {
 	return parts[1]
 }
 
-// extractConvertReq extracts the URL-encoded path from /convert/ URLs.
+// extractConvertReq 从 /convert/ URL 中提取编码后的请求路径。
 func extractConvertReq(rawURL string) string {
 	parts := strings.SplitN(rawURL, "/convert/", 2)
 	if len(parts) < 2 {

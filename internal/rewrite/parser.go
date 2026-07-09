@@ -1,3 +1,6 @@
+// Package rewrite 实现重写规则解析与转换引擎。
+// 将 QX 重写、Surge 模块、Loon 插件等格式解析为统一的中间表示，
+// 再转换为目标平台格式。对应 JS 版 Rewrite-Parser.js 的完整功能。
 package rewrite
 
 import (
@@ -9,6 +12,7 @@ import (
 	"github.com/script-hub-org/script-hub/internal/config"
 	"github.com/script-hub-org/script-hub/internal/eval"
 	"github.com/script-hub-org/script-hub/internal/httpclient"
+	"github.com/script-hub-org/script-hub/internal/util"
 	"github.com/script-hub-org/script-hub/internal/types"
 )
 
@@ -292,14 +296,14 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 		modules[i].Scripts = ApplyCronModification(modules[i].Scripts, input.Arguments["cron"], input.Arguments["cronexp"])
 
 		// Apply jsDelivr conversion
-		modules[i].Scripts = ApplyJsDelivr(modules[i].Scripts, isTrue(input.Arguments["jsDelivr"]))
+		modules[i].Scripts = ApplyJsDelivr(modules[i].Scripts, util.IsTrue(input.Arguments["jsDelivr"]))
 
 		// Apply jsc/jsc2 script-path forwarding
 		modules[i].Scripts = ApplyJsc(
 			modules[i].Scripts,
 			input.Arguments["jsc"], input.Arguments["jsc2"],
 			appShortName(input.TargetApp), input.Arguments["headers"],
-			isTrue(input.Arguments["compatibilityOnly"]),
+			util.IsTrue(input.Arguments["compatibilityOnly"]),
 			input.Arguments["prepend"],
 			input.Arguments["evalScriptori"], input.Arguments["evalScriptmodi"],
 			input.Arguments["evalUrlori"], input.Arguments["evalUrlmodi"],

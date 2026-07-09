@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/script-hub-org/script-hub/internal/util"
 )
 
 const scriptHubRawBase = "https://raw.githubusercontent.com/Script-Hub-Org/Script-Hub/main"
@@ -53,8 +55,8 @@ func (p *Parser) convertModules(modules []ParsedModule, targetApp string, args m
 
 func (p *Parser) convertToSurgeFormat(modules []ParsedModule, target string, args map[string]string) string {
 	out := surgeOutput{}
-	synMitm := isTrue(args["synMitm"])
-	delComments := isTrue(args["del"])
+	synMitm := util.IsTrue(args["synMitm"])
+	delComments := util.IsTrue(args["del"])
 
 	for _, mod := range modules {
 		out.Name = mod.Name
@@ -512,7 +514,7 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 	var modInputBox []InputBoxEntry
 	var bodyRewrites []BodyRewriteEntry
 	var skipProxy, realIP []string
-	delComments := isTrue(args["del"])
+	delComments := util.IsTrue(args["del"])
 
 	for _, mod := range modules {
 		name = mod.Name
@@ -620,7 +622,7 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 		sb.WriteString("\n")
 	}
 	// [General] section (Loon: force-http-engine-hosts, skip-proxy, real-ip)
-	synMitm := isTrue(args["synMitm"])
+	synMitm := util.IsTrue(args["synMitm"])
 	if synMitm {
 		skipProxy = uniqueStrings(skipProxy)
 		realIP = uniqueStrings(realIP)
@@ -815,7 +817,7 @@ func (p *Parser) convertLoonScript(rw ParsedRewrite) string {
 
 func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, args map[string]string) string {
 	out := surgeOutput{}
-	delComments := isTrue(args["del"])
+	delComments := util.IsTrue(args["del"])
 
 	for _, mod := range modules {
 		out.Name = mod.Name
@@ -844,7 +846,7 @@ func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, arg
 
 	out.MITM = uniqueStrings(out.MITM)
 
-	if isTrue(args["synMitm"]) {
+	if util.IsTrue(args["synMitm"]) {
 		out.ForceHTTPHosts = append(out.ForceHTTPHosts, out.MITM...)
 	}
 
@@ -909,8 +911,8 @@ func (p *Parser) formatStashOutput(out surgeOutput, modules []ParsedModule, args
 
 	// Collect tiles and cron from scripts
 	var tiles, cronEntries, providers, otherScripts []string
-	tilesTargets := getArgArr(args["tiles"])
-	tilesColors := getArgArr(args["tcolor"])
+	tilesTargets := util.GetArgArr(args["tiles"])
+	tilesColors := util.GetArgArr(args["tcolor"])
 
 	for _, s := range out.Scripts {
 		// Parse script name and fields

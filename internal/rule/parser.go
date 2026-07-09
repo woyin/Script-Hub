@@ -1,3 +1,6 @@
+// Package rule 实现规则集解析与转换引擎。
+// 将各平台规则集格式解析为统一中间表示，再转换为目标平台格式。
+// 对应 JS 版 rule-parser.js 的完整功能。
 package rule
 
 import (
@@ -11,6 +14,7 @@ import (
 	"github.com/script-hub-org/script-hub/internal/eval"
 	"github.com/script-hub-org/script-hub/internal/httpclient"
 	"github.com/script-hub-org/script-hub/internal/types"
+	"github.com/script-hub-org/script-hub/internal/util"
 )
 
 // ParseInput contains the input parameters for rule parsing.
@@ -156,10 +160,10 @@ func (p *Parser) parseRules(content string, input ParseInput) []ruleLine {
 	// Regex to strip script/complex pattern lines (lines starting with non-U)
 	scriptLineRegex := regexp.MustCompile(`^[^U].*(\[|=|{|\\|/.*\.js)`)
 
-	ipNoResolve := isTrue(input.Arguments["nore"])
+	ipNoResolve := util.IsTrue(input.Arguments["nore"])
 
-	includeItems := getArgArr(input.Arguments["y"])
-	excludeItems := getArgArr(input.Arguments["x"])
+	includeItems := util.GetArgArr(input.Arguments["y"])
+	excludeItems := util.GetArgArr(input.Arguments["x"])
 
 	for _, rawLine := range lines {
 		line := strings.TrimSpace(rawLine)
@@ -287,7 +291,7 @@ func (p *Parser) parseRuleLine(line string, input ParseInput) *ruleLine {
 	if sni != "" {
 		isIPRule := regexp.MustCompile(`^ip6?-[ca]`).MatchString(strings.ToLower(line))
 		if !isIPRule {
-			for _, item := range getArgArr(sni) {
+			for _, item := range util.GetArgArr(sni) {
 				if strings.Contains(line, item) {
 					rl.ExtMatch = ",extended-matching"
 				}
@@ -297,7 +301,7 @@ func (p *Parser) parseRuleLine(line string, input ParseInput) *ruleLine {
 
 	pm := input.Arguments["pm"]
 	if pm != "" {
-		for _, item := range getArgArr(pm) {
+		for _, item := range util.GetArgArr(pm) {
 			if strings.Contains(line, item) {
 				if rl.ExtMatch != "" {
 					rl.ExtMatch += ",pre-matching"
@@ -614,21 +618,7 @@ func hoStToHost(s string) string {
 
 // Helper functions
 
-func isTrue(s string) bool {
-	return s == "true" || s == "1" || s == "True"
-}
 
-func getArgArr(s string) []string {
-	if s == "" {
-		return nil
-	}
-	parts := strings.Split(s, "+")
-	result := make([]string, len(parts))
-	for i, p := range parts {
-		result[i] = strings.ReplaceAll(p, "➕", "+")
-	}
-	return result
-}
 
 func decodeURL(s string) (string, error) {
 	// Simple URL decode - the URLs in the request are already mostly decoded

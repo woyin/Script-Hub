@@ -1,3 +1,7 @@
+// Package eval 实现 JS eval 代码的解析与执行。
+// 支持 body.replace() 和 body.split().join() 模式的快速路径解析，
+// 以及通过 goja 运行时的任意 JS 代码回退执行。
+// 对应 JS 版 Rewrite-Parser.js 和 script-converter.js 中的 eval 逻辑。
 package eval
 
 import (

@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/script-hub-org/script-hub/internal/util"
 )
 
 const scriptHubRawURL = "https://raw.githubusercontent.com/Script-Hub-Org/Script-Hub/main"
@@ -16,8 +18,8 @@ const scriptHubRawURL = "https://raw.githubusercontent.com/Script-Hub-Org/Script
 //     rule is kept (rescued from being dropped as a comment).
 //   - x: any keyword matching the line prepends ";#" so the rule is excluded.
 func applyPinPout(lines []string, args map[string]string) []string {
-	includeItems := getArgArr(args["y"])
-	excludeItems := getArgArr(args["x"])
+	includeItems := util.GetArgArr(args["y"])
+	excludeItems := util.GetArgArr(args["x"])
 	if includeItems == nil && excludeItems == nil {
 		return lines
 	}

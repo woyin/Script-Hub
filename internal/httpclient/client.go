@@ -1,3 +1,6 @@
+// Package httpclient 提供统一的 HTTP 客户端封装。
+// 支持自定义超时、自定义请求头、gzip 解压等功能，
+// 对应 JS 版 Env.js 中的 HTTP 请求方法。
 package httpclient
 
 import (
@@ -10,14 +13,14 @@ import (
 	"time"
 )
 
-// Client wraps http.Client with configurable timeout and custom headers.
+// Client 是带有可配置超时和自定义头的 HTTP 客户端。
 type Client struct {
 	client  *http.Client
 	timeout time.Duration
-	headers map[string]string
+	headers map[string]string // 默认请求头
 }
 
-// NewClient creates a new HTTP client with the given timeout in seconds.
+// NewClient 创建带有指定超时（秒）的 HTTP 客户端。
 func NewClient(timeoutSec int) *Client {
 	return &Client{
 		client: &http.Client{
@@ -30,16 +33,16 @@ func NewClient(timeoutSec int) *Client {
 	}
 }
 
-// SetHeader sets a custom header for all subsequent requests.
+// SetHeader 设置所有后续请求的默认请求头。
 func (c *Client) SetHeader(key, value string) {
 	c.headers[key] = value
 }
 
-// Get performs an HTTP GET request with custom headers.
+// Get 执行带自定义头的 HTTP GET 请求。
 func (c *Client) Get(ctx context.Context, url string) (string, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", 0, fmt.Errorf("creating GET request: %w", err)
+		return "", 0, fmt.Errorf("创建 GET 请求失败: %w", err)
 	}
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
@@ -47,11 +50,11 @@ func (c *Client) Get(ctx context.Context, url string) (string, int, error) {
 	return c.doRequest(req)
 }
 
-// GetWithHeaders performs an HTTP GET request with additional custom headers.
+// GetWithHeaders 执行带额外自定义头的 HTTP GET 请求。
 func (c *Client) GetWithHeaders(ctx context.Context, url string, headers map[string]string) (string, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", 0, fmt.Errorf("creating GET request: %w", err)
+		return "", 0, fmt.Errorf("创建 GET 请求失败: %w", err)
 	}
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
@@ -62,11 +65,11 @@ func (c *Client) GetWithHeaders(ctx context.Context, url string, headers map[str
 	return c.doRequest(req)
 }
 
-// Post performs an HTTP POST request with custom headers.
+// Post 执行带自定义头的 HTTP POST 请求。
 func (c *Client) Post(ctx context.Context, url string, body io.Reader) (string, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 	if err != nil {
-		return "", 0, fmt.Errorf("creating POST request: %w", err)
+		return "", 0, fmt.Errorf("创建 POST 请求失败: %w", err)
 	}
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
@@ -74,6 +77,7 @@ func (c *Client) Post(ctx context.Context, url string, body io.Reader) (string, 
 	return c.doRequest(req)
 }
 
+// doRequest 执行 HTTP 请求并返回字符串响应体。
 func (c *Client) doRequest(req *http.Request) (string, int, error) {
 	bodyBytes, status, err := c.doRequestBytes(req)
 	if err != nil {
@@ -82,11 +86,11 @@ func (c *Client) doRequest(req *http.Request) (string, int, error) {
 	return string(bodyBytes), status, nil
 }
 
-// GetBytesWithHeaders performs an HTTP GET and returns raw bytes, status, and response headers.
+// GetBytesWithHeaders 执行 HTTP GET 请求，返回原始字节、状态码和响应头。
 func (c *Client) GetBytesWithHeaders(ctx context.Context, url string, headers map[string]string) ([]byte, int, map[string]string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, 0, nil, fmt.Errorf("creating GET request: %w", err)
+		return nil, 0, nil, fmt.Errorf("创建 GET 请求失败: %w", err)
 	}
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
@@ -97,15 +101,16 @@ func (c *Client) GetBytesWithHeaders(ctx context.Context, url string, headers ma
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, 0, nil, fmt.Errorf("executing request: %w", err)
+		return nil, 0, nil, fmt.Errorf("执行请求失败: %w", err)
 	}
 	defer resp.Body.Close()
 
+	// 自动解压 gzip 响应
 	var reader io.Reader = resp.Body
 	if resp.Header.Get("Content-Encoding") == "gzip" {
 		gzReader, err := gzip.NewReader(resp.Body)
 		if err != nil {
-			return nil, resp.StatusCode, nil, fmt.Errorf("creating gzip reader: %w", err)
+			return nil, resp.StatusCode, nil, fmt.Errorf("创建 gzip 读取器失败: %w", err)
 		}
 		defer gzReader.Close()
 		reader = gzReader
@@ -113,9 +118,10 @@ func (c *Client) GetBytesWithHeaders(ctx context.Context, url string, headers ma
 
 	bodyBytes, err := io.ReadAll(reader)
 	if err != nil {
-		return nil, resp.StatusCode, nil, fmt.Errorf("reading response body: %w", err)
+		return nil, resp.StatusCode, nil, fmt.Errorf("读取响应体失败: %w", err)
 	}
 
+	// 提取响应头（仅取每个头的第一个值）
 	respHeaders := make(map[string]string)
 	for k, v := range resp.Header {
 		if len(v) > 0 {
@@ -125,18 +131,20 @@ func (c *Client) GetBytesWithHeaders(ctx context.Context, url string, headers ma
 	return bodyBytes, resp.StatusCode, respHeaders, nil
 }
 
+// doRequestBytes 执行 HTTP 请求并返回字节响应体。
 func (c *Client) doRequestBytes(req *http.Request) ([]byte, int, error) {
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("executing request: %w", err)
+		return nil, 0, fmt.Errorf("执行请求失败: %w", err)
 	}
 	defer resp.Body.Close()
 
+	// 自动解压 gzip 响应
 	var reader io.Reader = resp.Body
 	if resp.Header.Get("Content-Encoding") == "gzip" {
 		gzReader, err := gzip.NewReader(resp.Body)
 		if err != nil {
-			return nil, resp.StatusCode, fmt.Errorf("creating gzip reader: %w", err)
+			return nil, resp.StatusCode, fmt.Errorf("创建 gzip 读取器失败: %w", err)
 		}
 		defer gzReader.Close()
 		reader = gzReader
@@ -144,13 +152,13 @@ func (c *Client) doRequestBytes(req *http.Request) ([]byte, int, error) {
 
 	bodyBytes, err := io.ReadAll(reader)
 	if err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("reading response body: %w", err)
+		return nil, resp.StatusCode, fmt.Errorf("读取响应体失败: %w", err)
 	}
 	return bodyBytes, resp.StatusCode, nil
 }
 
-// ParseCustomHeaders parses custom headers from the format used in query parameters.
-// Format: "Key1:Value1\nKey2:Value2"
+// ParseCustomHeaders 从查询参数格式的字符串解析自定义请求头。
+// 格式："Key1:Value1\nKey2:Value2"，兼容 \r\n 换行符。
 func ParseCustomHeaders(headerStr string) map[string]string {
 	headers := make(map[string]string)
 	if headerStr == "" {

@@ -10,31 +10,20 @@ import (
 	"sync"
 
 	"github.com/script-hub-org/script-hub/internal/httpclient"
+	"github.com/script-hub-org/script-hub/internal/util"
 )
 
 // --- Parameter Modification Functions ---
 // These implement the same parameter modification logic as the original
 // Rewrite-Parser.js, applying keyword-based modifications to parsed entries.
 
-// getArgArr splits a "+" separated argument string, replacing ➕ with +.
-func getArgArr(s string) []string {
-	if s == "" {
-		return nil
-	}
-	parts := strings.Split(s, "+")
-	result := make([]string, len(parts))
-	for i, p := range parts {
-		result[i] = strings.ReplaceAll(p, "➕", "+")
-	}
-	return result
-}
 
 // ApplyArgModification modifies script arguments based on arg/argv parameters.
 // arg=keyword1+keyword2, argv=value1+value2
 // If a script's pattern or path contains the keyword, its argument is replaced.
 func ApplyArgModification(scripts []ParsedRewrite, argTarget, argv string) []ParsedRewrite {
-	targets := getArgArr(argTarget)
-	values := getArgArr(argv)
+	targets := util.GetArgArr(argTarget)
+	values := util.GetArgArr(argv)
 	if len(targets) == 0 || len(values) == 0 {
 		return scripts
 	}
@@ -56,8 +45,8 @@ func ApplyArgModification(scripts []ParsedRewrite, argTarget, argv string) []Par
 
 // ApplyScriptNameModification modifies script names based on njsnametarget/njsname parameters.
 func ApplyScriptNameModification(scripts []ParsedRewrite, nameTarget, newName string) []ParsedRewrite {
-	targets := getArgArr(nameTarget)
-	names := getArgArr(newName)
+	targets := util.GetArgArr(nameTarget)
+	names := util.GetArgArr(newName)
 	if len(targets) == 0 || len(names) == 0 {
 		return scripts
 	}
@@ -78,8 +67,8 @@ func ApplyScriptNameModification(scripts []ParsedRewrite, nameTarget, newName st
 
 // ApplyTimeoutModification modifies script timeouts based on timeoutt/timeoutv parameters.
 func ApplyTimeoutModification(scripts []ParsedRewrite, timeoutTarget, timeoutVal string) []ParsedRewrite {
-	targets := getArgArr(timeoutTarget)
-	values := getArgArr(timeoutVal)
+	targets := util.GetArgArr(timeoutTarget)
+	values := util.GetArgArr(timeoutVal)
 	if len(targets) == 0 || len(values) == 0 {
 		return scripts
 	}
@@ -105,8 +94,8 @@ func ApplyTimeoutModification(scripts []ParsedRewrite, timeoutTarget, timeoutVal
 // ApplyEngineModification modifies script engine based on enginet/enginev parameters.
 // Surge-specific: adds engine=VALUE to the script config.
 func ApplyEngineModification(scripts []ParsedRewrite, engineTarget, engineVal string) []ParsedRewrite {
-	targets := getArgArr(engineTarget)
-	values := getArgArr(engineVal)
+	targets := util.GetArgArr(engineTarget)
+	values := util.GetArgArr(engineVal)
 	if len(targets) == 0 || len(values) == 0 {
 		return scripts
 	}
@@ -128,8 +117,8 @@ func ApplyEngineModification(scripts []ParsedRewrite, engineTarget, engineVal st
 // ApplyCronModification modifies cron expressions based on cron/cronexp parameters.
 // cron=keyword1+keyword2, cronexp=expression1+expression2 (dots become spaces)
 func ApplyCronModification(scripts []ParsedRewrite, cronTarget, cronExp string) []ParsedRewrite {
-	targets := getArgArr(cronTarget)
-	exps := getArgArr(cronExp)
+	targets := util.GetArgArr(cronTarget)
+	exps := util.GetArgArr(cronExp)
 	if len(targets) == 0 || len(exps) == 0 {
 		return scripts
 	}
@@ -292,8 +281,8 @@ func ApplyJsDelivr(scripts []ParsedRewrite, enabled bool) []ParsedRewrite {
 // http://script.hub/convert/_start_/{path}/_end_/_yuliu_.js?type=_js_from_-script&target={app}-script[&wrap_response=true]&headers=...
 // jsc2 takes precedence over jsc when both match.
 func ApplyJsc(scripts []ParsedRewrite, jsc, jsc2, app, headers string, compatibilityOnly bool, prepend, evOri, evModi, evUrlOri, evUrlModi string) []ParsedRewrite {
-	jscItems := getArgArr(jsc)
-	jsc2Items := getArgArr(jsc2)
+	jscItems := util.GetArgArr(jsc)
+	jsc2Items := util.GetArgArr(jsc2)
 	if len(jscItems) == 0 && len(jsc2Items) == 0 {
 		return scripts
 	}
@@ -390,7 +379,7 @@ func jsDelivrConvert(urlStr string) string {
 // their header/content-type information in the output.
 // This affects how the converter generates output for these entry types.
 func ApplyKeepHeader(args map[string]string) bool {
-	return isTrue(args["keepHeader"])
+	return util.IsTrue(args["keepHeader"])
 }
 
 // ApplyMetadataOverrides overrides name, desc, icon, category from parameters.
@@ -453,8 +442,8 @@ func containsKeyword(rw ParsedRewrite, keyword string) bool {
 // rules are skipped for sni (JS: x.search(/^ip6?-[ca]/i) == -1).
 // For AND/OR/NOT logical rules, ModifyRule is used to recursively apply flags.
 func ApplySniPm(rules []string, sni, pm string) []string {
-	sniItems := getArgArr(sni)
-	pmItems := getArgArr(pm)
+	sniItems := util.GetArgArr(sni)
+	pmItems := util.GetArgArr(pm)
 	if len(sniItems) == 0 && len(pmItems) == 0 {
 		return rules
 	}
@@ -645,10 +634,6 @@ func argsValue(args map[string]string, key, fallback string) string {
 	return fallback
 }
 
-// isTrue checks if a string represents a truthy value.
-func isTrue(s string) bool {
-	return s == "true" || s == "1" || s == "True"
-}
 
 // LeadingTemplate holds the result of TakeLeadingTemplate.
 type LeadingTemplate struct {

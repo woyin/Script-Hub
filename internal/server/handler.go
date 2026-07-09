@@ -1,3 +1,9 @@
+// handler.go 实现 Script Hub HTTP 请求处理器。
+// 每个处理器对应 JS 版 scriptMap.js 中的一条路由规则：
+//   - scriptHubHandler    → script-hub.js（前端 UI）
+//   - rewriteParserHandler → Rewrite-Parser.js（重写转换）
+//   - ruleParserHandler   → rule-parser.js（规则集转换）
+//   - scriptConverterHandler → script-converter.js（脚本转换）
 package server
 
 import (
@@ -13,8 +19,11 @@ import (
 	"github.com/script-hub-org/script-hub/internal/rewrite"
 	"github.com/script-hub-org/script-hub/internal/rule"
 	"github.com/script-hub-org/script-hub/internal/types"
+	"github.com/script-hub-org/script-hub/internal/util"
 )
 
+// scriptHubHandler 处理前端页面请求（/、/edit/*、/reload）。
+// 对应 JS 版 scriptMap.js 中 script-hub.js 的路由规则。
 func (s *Server) scriptHubHandler(w http.ResponseWriter, r *http.Request) {
 	scriptURL := buildScriptHubURL(r)
 	log.Printf("scriptHubHandler url: %s", scriptURL)
@@ -35,19 +44,24 @@ func (s *Server) scriptHubHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(html))
 }
 
+// reloadHandler 处理 Surge 重载请求，返回重载完成页面。
+// 对应 JS 版 script-hub.js 中的 isReloadRequest() 逻辑。
 func (s *Server) reloadHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=UTF-8")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Write([]byte(`<meta charset="UTF-8" /><h1>✅ Surge 重载完成</h1><a href="surge://">点此打开 Surge</a>`))
 }
 
+// rewriteParserHandler 处理重写转换请求（QX重写/Surge模块/Loon插件/全模块）。
+// 对应 JS 版 scriptMap.js 中 Rewrite-Parser.js 的路由规则。
+// URL 格式: /file/_start_/{encoded_url}/_end_/?type={source_type}&target={target_app}
 func (s *Server) rewriteParserHandler(w http.ResponseWriter, r *http.Request) {
 	scriptURL := buildScriptHubURL(r)
 	log.Printf("rewriteParserHandler url: %s", scriptURL)
 
 	req, _ := extractReqFromURL(scriptURL)
 	urlArg := extractURLArg(scriptURL)
-	queryParams := parseQueryString(urlArg)
+	queryParams := util.ParseQueryString(urlArg)
 
 	parser := rewrite.NewParser(s.cfg)
 	input := rewrite.ParseInput{
@@ -67,19 +81,22 @@ func (s *Server) rewriteParserHandler(w http.ResponseWriter, r *http.Request) {
 	writeResponse(w, output, s.cfg)
 }
 
+// ruleParserHandler 处理规则集转换请求。
+// 对应 JS 版 scriptMap.js 中 rule-parser.js 的路由规则。
+// 当 target 为通用 "rule-set" 时，自动从 User-Agent 推断目标平台。
 func (s *Server) ruleParserHandler(w http.ResponseWriter, r *http.Request) {
 	scriptURL := buildScriptHubURL(r)
 	log.Printf("ruleParserHandler url: %s", scriptURL)
 
 	req, _ := extractReqFromURL(scriptURL)
 	urlArg := extractURLArg(scriptURL)
-	queryParams := parseQueryString(urlArg)
+	queryParams := util.ParseQueryString(urlArg)
 
 	parser := rule.NewParser(s.cfg)
 	target := queryParams["target"]
 	if target == "" || target == "rule-set" {
-		// Mirror JS: when target is the generic "rule-set", infer the platform
-		// from the request User-Agent (Surge/LanceX/Egern, Stash, Loon, Shadowrocket).
+		// 镜像 JS 行为：当 target 为通用的 "rule-set" 时，
+		// 从请求 User-Agent 推断目标平台
 		if inferred := inferTargetFromUA(r); inferred != "" {
 			target = inferred
 		}
@@ -100,18 +117,21 @@ func (s *Server) ruleParserHandler(w http.ResponseWriter, r *http.Request) {
 	writeResponse(w, output, s.cfg)
 }
 
+// scriptConverterHandler 处理脚本转换请求（QX脚本 → 目标平台脚本）。
+// 对应 JS 版 scriptMap.js 中 script-converter.js 的路由规则。
+// URL 格式: /convert/_start_/{url}/_end_/?type={source_type}&target-app={target}
 func (s *Server) scriptConverterHandler(w http.ResponseWriter, r *http.Request) {
 	scriptURL := buildScriptHubURL(r)
 	log.Printf("scriptConverterHandler url: %s", scriptURL)
 
 	req := extractConvertReq(scriptURL)
 	urlArg := extractURLArg(scriptURL)
-	queryParams := parseQueryString(urlArg)
+	queryParams := util.ParseQueryString(urlArg)
 
-	// For /convert/ URLs without /_end_/, query params are embedded in the URL itself
+	// 对于不含 /_end_/ 的 /convert/ URL，查询参数嵌入在 URL 本身中
 	if len(queryParams) == 0 {
 		if qIdx := strings.Index(req, "?"); qIdx >= 0 {
-			queryParams = parseQueryString(req[qIdx:])
+			queryParams = util.ParseQueryString(req[qIdx:])
 			req = req[:qIdx]
 		}
 	}
@@ -137,6 +157,9 @@ func (s *Server) scriptConverterHandler(w http.ResponseWriter, r *http.Request) 
 	writeResponse(w, output, s.cfg)
 }
 
+// writeResponse 将解析器输出写入 HTTP 响应。
+// 统一处理：设置响应头、将 script.hub URL 替换为实际服务地址。
+// 对应 JS 版 service.js 中的 ctx.body 替换逻辑。
 func writeResponse(w http.ResponseWriter, output types.ResponseWriter, cfg *config.Config) {
 	resp := output.GetResponse()
 	baseURL := cfg.BaseURL
@@ -151,35 +174,9 @@ func writeResponse(w http.ResponseWriter, output types.ResponseWriter, cfg *conf
 	w.Write([]byte(body))
 }
 
-func parseQueryString(query string) map[string]string {
-	result := make(map[string]string)
-	if query == "" {
-		return result
-	}
-	// Mirror JS parseQueryString: take everything after the FIRST '?'
-	if idx := strings.Index(query, "?"); idx >= 0 {
-		query = query[idx+1:]
-	} else {
-		query = strings.TrimPrefix(query, "?")
-	}
-	for _, pair := range strings.Split(query, "&") {
-		if pair == "" {
-			continue
-		}
-		kv := strings.SplitN(pair, "=", 2)
-		// JS uses decodeURIComponent which does NOT decode '+' into space,
-		// so use url.PathUnescape (also leaves '+' alone) instead of QueryUnescape.
-		key, _ := url.PathUnescape(kv[0])
-		if len(kv) == 2 {
-			val, _ := url.PathUnescape(kv[1])
-			result[key] = val
-		}
-		// JS regex requires an '=', so bare flags (no '=') are dropped.
-		_ = key
-	}
-	return result
-}
-
+// decodeReqArr 解码请求 URL 数组。
+// 对应 JS 版 Rewrite-Parser.js 中的 reqArr 解析逻辑：
+// 多个 URL 用 😂（%F0%9F%98%82）表情符号分隔。
 func decodeReqArr(req string) []string {
 	if strings.Contains(req, "%F0%9F%98%82") {
 		parts := strings.Split(req, "%F0%9F%98%82")
@@ -200,8 +197,9 @@ func decodeReqArr(req string) []string {
 	return []string{decoded}
 }
 
-// inferTargetFromUA maps a request User-Agent to a rule-set target platform,
-// matching rule-parser.js UA detection. Returns "" if no match.
+// inferTargetFromUA 根据请求 User-Agent 推断规则集目标平台。
+// 对应 JS 版 rule-parser.js 中的 UA 检测逻辑。
+// 支持识别：Surge/LanceX/Egern、Stash、Loon、Shadowrocket。
 func inferTargetFromUA(r *http.Request) string {
 	ua := r.Header.Get("User-Agent")
 	if ua == "" {

@@ -1,3 +1,7 @@
+// Package converter 实现脚本转换引擎。
+// 将 QX 脚本转换为目标平台（Surge、Loon、Stash、Shadowrocket）脚本格式，
+// 支持 subconverter 代理模式和兼容性模式。
+// 对应 JS 版 script-converter.js 的完整功能。
 package converter
 
 import (
@@ -13,6 +17,7 @@ import (
 	"github.com/script-hub-org/script-hub/internal/eval"
 	"github.com/script-hub-org/script-hub/internal/httpclient"
 	"github.com/script-hub-org/script-hub/internal/types"
+	"github.com/script-hub-org/script-hub/internal/util"
 )
 
 // ConvertInput contains the input parameters for script conversion.
@@ -64,12 +69,12 @@ func (c *Converter) Convert(ctx context.Context, input ConvertInput) (ConvertOut
 
 	sourceType := input.SourceType
 	isScriptConversion := strings.HasSuffix(sourceType, "-script")
-	compatibilityOnly := isTrue(input.Arguments["compatibilityOnly"])
+	compatibilityOnly := util.IsTrue(input.Arguments["compatibilityOnly"])
 	keepHeader := input.KeepHeader
 	setHeader := input.Arguments["header"]
 	setContentType := input.Arguments["contentType"]
 	prepend := input.Arguments["prepend"]
-	wrapResponse := isTrue(input.Arguments["wrap_response"])
+	wrapResponse := util.IsTrue(input.Arguments["wrap_response"])
 	subconverterURL := input.Arguments["subconverter"]
 	targetApp := strings.ToLower(input.TargetApp)
 
@@ -915,7 +920,3 @@ func buildSubconverterURL(subconverterURL, req, localText string, args map[strin
 	return subconverterURL + sep + params.Encode()
 }
 
-// isTrue checks if a string represents a truthy value.
-func isTrue(s string) bool {
-	return s == "true" || s == "1" || s == "True"
-}
