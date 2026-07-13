@@ -3,7 +3,6 @@
 //   - scriptHubHandler    → script-hub.js（前端 UI）
 //   - rewriteParserHandler → Rewrite-Parser.js（重写转换）
 //   - ruleParserHandler   → rule-parser.js（规则集转换）
-//   - scriptConverterHandler → script-converter.js（脚本转换）
 package server
 
 import (
@@ -13,7 +12,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/script-hub-org/script-hub/internal/converter"
 	"github.com/script-hub-org/script-hub/internal/frontend"
 	"github.com/script-hub-org/script-hub/internal/rewrite"
 	"github.com/script-hub-org/script-hub/internal/rule"
@@ -21,29 +19,15 @@ import (
 	"github.com/script-hub-org/script-hub/internal/util"
 )
 
-// scriptHubHandler 处理前端页面请求（/、/edit/*、/reload）。
+// scriptHubHandler 处理转换页面请求。
 // 对应 JS 版 scriptMap.js 中 script-hub.js 的路由规则。
 func (s *Server) scriptHubHandler(w http.ResponseWriter, r *http.Request) {
-	scriptURL := buildScriptHubURL(r)
-
-	if strings.Contains(scriptURL, "/reload") {
-		s.reloadHandler(w, r)
-		return
-	}
 
 	baseURL := baseURLFromRequest(r)
 	html := frontend.GenerateHTML(baseURL)
 	w.Header().Set("Content-Type", "text/html; charset=UTF-8")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Write([]byte(html))
-}
-
-// reloadHandler 处理 Surge 重载请求，返回重载完成页面。
-// 对应 JS 版 script-hub.js 中的 isReloadRequest() 逻辑。
-func (s *Server) reloadHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=UTF-8")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Write([]byte(`<meta charset="UTF-8" /><h1>✅ Surge 重载完成</h1><a href="surge://">点此打开 Surge</a>`))
 }
 
 // rewriteParserHandler 处理重写转换请求（QX重写/Surge模块/Loon插件/全模块）。
@@ -103,45 +87,6 @@ func (s *Server) ruleParserHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("ruleParser error: %v", err)
 		http.Error(w, fmt.Sprintf("Rule parse error: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	writeResponse(w, output, r)
-}
-
-// scriptConverterHandler 处理脚本转换请求（QX脚本 → 目标平台脚本）。
-// 对应 JS 版 scriptMap.js 中 script-converter.js 的路由规则。
-// URL 格式: /convert/_start_/{url}/_end_/?type={source_type}&target-app={target}
-func (s *Server) scriptConverterHandler(w http.ResponseWriter, r *http.Request) {
-	scriptURL := buildScriptHubURL(r)
-
-	req := extractConvertReq(scriptURL)
-	urlArg := extractURLArg(scriptURL)
-	queryParams := util.ParseQueryString(urlArg)
-
-	// 对于不含 /_end_/ 的 /convert/ URL，查询参数嵌入在 URL 本身中
-	if len(queryParams) == 0 {
-		if qIdx := strings.Index(req, "?"); qIdx >= 0 {
-			queryParams = util.ParseQueryString(req[qIdx:])
-			req = req[:qIdx]
-		}
-	}
-
-	conv := converter.NewConverter(s.cfg)
-	input := converter.ConvertInput{
-		URL:        req,
-		LocalText:  queryParams["localtext"],
-		SourceType: queryParams["type"],
-		TargetApp:  queryParams["target-app"],
-		Arguments:  queryParams,
-		KeepHeader: queryParams["keepHeader"] == "true",
-		JsDelivr:   queryParams["jsDelivr"],
-	}
-
-	output, err := conv.Convert(r.Context(), input)
-	if err != nil {
-		log.Printf("scriptConverter error: %v", err)
-		http.Error(w, fmt.Sprintf("Script convert error: %v", err), http.StatusInternalServerError)
 		return
 	}
 

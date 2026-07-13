@@ -10,9 +10,7 @@ import (
 	"strings"
 
 	"github.com/script-hub-org/script-hub/internal/config"
-	"github.com/script-hub-org/script-hub/internal/eval"
 	"github.com/script-hub-org/script-hub/internal/httpclient"
-	"github.com/script-hub-org/script-hub/internal/util"
 	"github.com/script-hub-org/script-hub/internal/types"
 )
 
@@ -44,7 +42,7 @@ func (o ParseOutput) GetResponse() types.ResponseData {
 type RewriteType int
 
 const (
-	RewriteTypeRequestHeader  RewriteType = iota
+	RewriteTypeRequestHeader RewriteType = iota
 	RewriteTypeResponseHeader
 	RewriteTypeRequestBody
 	RewriteTypeResponseBody
@@ -72,74 +70,74 @@ const (
 
 // ParsedRewrite represents a parsed rewrite rule from any source format.
 type ParsedRewrite struct {
-	Pattern      string
-	Type         RewriteType
-	Replacement  string // For QX header/body: "match->replace"; for URL rewrite: target URL; for native header rewrite: full directive
-	MatchPart    string // For QX header/body: the match regex/string (before ->)
-	ReplacePart  string // For QX header/body: the replacement string (after ->)
-	EchoCT       string // For echo-response: content type
-	EchoURL      string // For echo-response: echo data URL
-	MockData     string // Mock inline data
-	MockDataPath string // Mock data file path
-	MockType     string // data-type (file/text/json/...)
-	MockStatus   string // status-code
-	MockHeader   string // header
-	MockBase64   bool   // mock-data-is-base64
-	MockIsLoon   bool   // Loon mock-response-body form
-	BodyRewrite  *BodyRewriteEntry // non-nil when parsed from body rewrite line
-	ScriptPath   string
-	ScriptType   string // http-request, http-response, cron, generic
-	Arguments    string
-	Timeout      int
-	RequiresBody bool
-	BodyType     string // request-body, response-body
-	CronExp      string // Cron expression for scheduled scripts
-	Engine       string // Script engine (Surge-specific: javascript, wasm, etc.)
-	MaxSize      string // max-size parameter
-	EventName    string // event-name parameter
-	BinaryBody   bool   // binary-body-mode
-	WakeSystem   bool   // wake-system
-	Ability      string // ability parameter
-	Enable       bool   // enable parameter
+	Pattern              string
+	Type                 RewriteType
+	Replacement          string            // For QX header/body: "match->replace"; for URL rewrite: target URL; for native header rewrite: full directive
+	MatchPart            string            // For QX header/body: the match regex/string (before ->)
+	ReplacePart          string            // For QX header/body: the replacement string (after ->)
+	EchoCT               string            // For echo-response: content type
+	EchoURL              string            // For echo-response: echo data URL
+	MockData             string            // Mock inline data
+	MockDataPath         string            // Mock data file path
+	MockType             string            // data-type (file/text/json/...)
+	MockStatus           string            // status-code
+	MockHeader           string            // header
+	MockBase64           bool              // mock-data-is-base64
+	MockIsLoon           bool              // Loon mock-response-body form
+	BodyRewrite          *BodyRewriteEntry // non-nil when parsed from body rewrite line
+	ScriptPath           string
+	ScriptType           string // http-request, http-response, cron, generic
+	Arguments            string
+	Timeout              int
+	RequiresBody         bool
+	BodyType             string // request-body, response-body
+	CronExp              string // Cron expression for scheduled scripts
+	Engine               string // Script engine (Surge-specific: javascript, wasm, etc.)
+	MaxSize              string // max-size parameter
+	EventName            string // event-name parameter
+	BinaryBody           bool   // binary-body-mode
+	WakeSystem           bool   // wake-system
+	Ability              string // ability parameter
+	Enable               bool   // enable parameter
 	ScriptUpdateInterval string // script-update-interval
-	ImgURL       string // img-url
-	Tag          string // tag (alternative script name source)
-	Debug        string // debug parameter
-	Desc         string // desc parameter
-	MITM         []string
+	ImgURL               string // img-url
+	Tag                  string // tag (alternative script name source)
+	Debug                string // debug parameter
+	Desc                 string // desc parameter
+	MITM                 []string
 }
 
 // ParsedModule represents a fully parsed module/plugin from any platform.
 type ParsedModule struct {
-	Name     string
-	Desc     string
-	Rewrites []ParsedRewrite
-	Rules    []string
-	Scripts  []ParsedRewrite
-	MITM     []string
-	Icon     string
-	OpenURL  string
-	CronExp  string
-	Panels   []PanelInfo
-	Hosts    []HostInfo
-	Category string
-	Keyword  string
-	MetaExtra []string // extra #!key=value lines (e.g. Loon interactive buttons)
-	ModInputBox []InputBoxEntry // Loon #!select= and #!input= interactive entries
-	SgArg    []SgArgument
-	BodyRewrites []BodyRewriteEntry
+	Name               string
+	Desc               string
+	Rewrites           []ParsedRewrite
+	Rules              []string
+	Scripts            []ParsedRewrite
+	MITM               []string
+	Icon               string
+	OpenURL            string
+	CronExp            string
+	Panels             []PanelInfo
+	Hosts              []HostInfo
+	Category           string
+	Keyword            string
+	MetaExtra          []string        // extra #!key=value lines (e.g. Loon interactive buttons)
+	ModInputBox        []InputBoxEntry // Loon #!select= and #!input= interactive entries
+	SgArg              []SgArgument
+	BodyRewrites       []BodyRewriteEntry
 	ConditionalMITMKey string // set when #!arguments has value=hostname
-	SkipProxy    []string
-	RealIP       []string
-	HNAddMethod  string // %APPEND% or %INSERT% (detected from input)
-	FHEAddMethod string // for force-http-engine-hosts
+	SkipProxy          []string
+	RealIP             []string
+	HNAddMethod        string // %APPEND% or %INSERT% (detected from input)
+	FHEAddMethod       string // for force-http-engine-hosts
 }
 
 // BodyRewriteEntry holds a parsed body rewrite rule (jq or replace-regex).
 type BodyRewriteEntry struct {
-	Type   string // http-request, http-response, http-request-jq, http-response-jq
-	Regex  string
-	Value  string
+	Type  string // http-request, http-response, http-request-jq, http-response-jq
+	Regex string
+	Value string
 }
 
 // SgArgument holds a Surge module #!arguments entry.
@@ -252,10 +250,6 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 		}, nil
 	}
 
-	// Apply eval operations on original content (before conversion)
-	evalParams := eval.EvalParamsFromArgs(input.Arguments)
-	body = eval.ApplyBeforeConversion(ctx, body, evalParams, p.client)
-
 	// Parse based on source type
 	var modules []ParsedModule
 	switch input.SourceType {
@@ -295,20 +289,6 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 		modules[i].Scripts = ApplyEngineModification(modules[i].Scripts, input.Arguments["enginet"], input.Arguments["enginev"])
 		modules[i].Scripts = ApplyCronModification(modules[i].Scripts, input.Arguments["cron"], input.Arguments["cronexp"])
 
-		// Apply jsDelivr conversion
-		modules[i].Scripts = ApplyJsDelivr(modules[i].Scripts, util.IsTrue(input.Arguments["jsDelivr"]))
-
-		// Apply jsc/jsc2 script-path forwarding
-		modules[i].Scripts = ApplyJsc(
-			modules[i].Scripts,
-			input.Arguments["jsc"], input.Arguments["jsc2"],
-			appShortName(input.TargetApp), input.Arguments["headers"],
-			util.IsTrue(input.Arguments["compatibilityOnly"]),
-			input.Arguments["prepend"],
-			input.Arguments["evalScriptori"], input.Arguments["evalScriptmodi"],
-			input.Arguments["evalUrlori"], input.Arguments["evalUrlmodi"],
-		)
-
 		// Apply MITM modifications
 		modules[i].MITM = ApplyMITMAdditions(modules[i].MITM, input.Arguments["hnadd"])
 		modules[i].MITM = ApplyMITMDeletions(modules[i].MITM, input.Arguments["hndel"])
@@ -329,13 +309,10 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 	// Convert to target format
 	output := p.convertModules(modules, input.TargetApp, input.Arguments)
 
-	// Apply eval operations on converted content (after conversion)
-	output = eval.ApplyAfterConversion(ctx, output, evalParams, p.client)
-
 	return ParseOutput{
 		Content: output,
 		Headers: map[string]string{
-			"Content-Type":                "text/plain; charset=utf-8",
+			"Content-Type":                 "text/plain; charset=utf-8",
 			"Access-Control-Allow-Origin":  "*",
 			"Access-Control-Allow-Methods": "POST,GET,OPTIONS,PUT,DELETE",
 			"Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept",

@@ -17,21 +17,17 @@ func (s *Server) setupRoutes() {
 }
 
 // dispatchHandler 实现与 JS 版 scriptMap.js 相同的路由逻辑：
-//   - /、/edit/*、/reload → 前端页面
+//   - /                  → 转换页面
 //   - /file/_start_/...   → 重写/规则解析器
-//   - /convert/...         → 脚本转换器
 func (s *Server) dispatchHandler(w http.ResponseWriter, r *http.Request) {
 	uri := r.URL.RequestURI()
 
 	switch {
-	case uri == "/" || strings.HasPrefix(uri, "/edit/") || uri == "/reload":
+	case uri == "/":
 		s.scriptHubHandler(w, r)
 
 	case strings.Contains(uri, "/file/_start_/"):
 		s.fileHandler(w, r)
-
-	case strings.Contains(uri, "/convert/"):
-		s.scriptConverterHandler(w, r)
 
 	default:
 		http.NotFound(w, r)
@@ -94,19 +90,4 @@ func extractURLArg(rawURL string) string {
 		return ""
 	}
 	return parts[1]
-}
-
-// extractConvertReq 从 /convert/ URL 中提取编码后的请求路径。
-func extractConvertReq(rawURL string) string {
-	parts := strings.SplitN(rawURL, "/convert/", 2)
-	if len(parts) < 2 {
-		return ""
-	}
-	rest := parts[1]
-	rest = strings.TrimPrefix(rest, "_start_/")
-	endParts := strings.SplitN(rest, "/_end_/", 2)
-	if len(endParts) < 1 {
-		return rest
-	}
-	return endParts[0]
 }

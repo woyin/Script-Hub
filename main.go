@@ -19,12 +19,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/script-hub-org/script-hub/internal/config"
-	"github.com/script-hub-org/script-hub/internal/frontend"
 	"github.com/script-hub-org/script-hub/internal/server"
 )
 
@@ -35,26 +33,6 @@ func main() {
 	cfg := config.LoadConfig()
 
 	log.Printf("Script Hub %s", version)
-
-	// ── 静态导出模式 ──
-	// 设置 EXPORT_HTML 目录路径时，仅导出 HTML 文件后退出，不启动 HTTP 服务。
-	if cfg.ExportHTML != "" {
-		exportDir := cfg.ExportHTML
-		if err := os.MkdirAll(exportDir, 0755); err != nil {
-			log.Fatalf("创建导出目录失败: %v", err)
-		}
-		// 导出模式下无 HTTP 请求，需通过 BASE_URL 环境变量指定目标地址
-		baseURL := os.Getenv("BASE_URL")
-		if baseURL == "" {
-			baseURL = "https://127.0.0.1:" + cfg.Port
-		}
-		html := frontend.GenerateHTML(baseURL)
-		if err := os.WriteFile(filepath.Join(exportDir, "index.html"), []byte(html), 0644); err != nil {
-			log.Fatalf("写入 index.html 失败: %v", err)
-		}
-		log.Printf("HTML 已导出至 %s", exportDir)
-		return
-	}
 
 	// ── HTTP 服务模式 ──
 	srv := server.New(cfg)

@@ -17,7 +17,6 @@ import (
 // These implement the same parameter modification logic as the original
 // Rewrite-Parser.js, applying keyword-based modifications to parsed entries.
 
-
 // ApplyArgModification modifies script arguments based on arg/argv parameters.
 // arg=keyword1+keyword2, argv=value1+value2
 // If a script's pattern or path contains the keyword, its argument is replaced.
@@ -265,123 +264,6 @@ func ApplyDelCommented(lines []string, del bool) []string {
 	return result
 }
 
-// ApplyJsDelivr converts GitHub URLs in script paths to jsDelivr CDN URLs.
-func ApplyJsDelivr(scripts []ParsedRewrite, enabled bool) []ParsedRewrite {
-	if !enabled {
-		return scripts
-	}
-	for i := range scripts {
-		scripts[i].ScriptPath = jsDelivrConvert(scripts[i].ScriptPath)
-	}
-	return scripts
-}
-
-// ApplyJsc wraps matching script paths into a Script Hub convert URL,
-// mirroring Rewrite-Parser.js jsc/jsc2: a matching script-path is rewritten to
-// http://script.hub/convert/_start_/{path}/_end_/_yuliu_.js?type=_js_from_-script&target={app}-script[&wrap_response=true]&headers=...
-// jsc2 takes precedence over jsc when both match.
-func ApplyJsc(scripts []ParsedRewrite, jsc, jsc2, app, headers string, compatibilityOnly bool, prepend, evOri, evModi, evUrlOri, evUrlModi string) []ParsedRewrite {
-	jscItems := util.GetArgArr(jsc)
-	jsc2Items := util.GetArgArr(jsc2)
-	if len(jscItems) == 0 && len(jsc2Items) == 0 {
-		return scripts
-	}
-	for i := range scripts {
-		path := scripts[i].ScriptPath
-		if path == "" {
-			continue
-		}
-		jscStatus := matchAny(path, jscItems)
-		jsc2Status := matchAny(path, jsc2Items)
-		if jsc2Status {
-			jscStatus = false
-		}
-		if !jscStatus && !jsc2Status {
-			continue
-		}
-		suffix := "/_end_/_yuliu_.js?type=_js_from_-script&target=" + app + "-script"
-		if jsc2Status {
-			suffix += "&wrap_response=true"
-		}
-		if headers != "" {
-			suffix += "&headers=" + urlEncode(headers)
-		}
-		if compatibilityOnly {
-			suffix += "&compatibilityOnly=true"
-		}
-		if prepend != "" {
-			suffix += "&prepend=" + urlEncode(prepend)
-		}
-		if evOri != "" {
-			suffix += "&evalScriptori=" + urlEncode(evOri)
-		}
-		if evModi != "" {
-			suffix += "&evalScriptmodi=" + urlEncode(evModi)
-		}
-		if evUrlOri != "" {
-			suffix += "&evalUrlori=" + urlEncode(evUrlOri)
-		}
-		if evUrlModi != "" {
-			suffix += "&evalUrlmodi=" + urlEncode(evUrlModi)
-		}
-		scripts[i].ScriptPath = "http://script.hub/convert/_start_/" + path + suffix
-	}
-	return scripts
-}
-
-// matchAny reports whether s contains any of the items.
-func matchAny(s string, items []string) bool {
-	for _, it := range items {
-		if strings.Contains(s, it) {
-			return true
-		}
-	}
-	return false
-}
-
-// urlEncode percent-encodes a string for use in a query parameter.
-func urlEncode(s string) string {
-	return strings.ReplaceAll(
-		strings.ReplaceAll(
-			strings.ReplaceAll(
-				strings.ReplaceAll(s, "%", "%25"),
-			"&", "%26"),
-		" ", "%20"),
-		"?", "%3F")
-}
-
-// jsDelivrConvert converts a GitHub raw URL to jsDelivr CDN URL.
-func jsDelivrConvert(urlStr string) string {
-	if urlStr == "" {
-		return urlStr
-	}
-	if strings.HasPrefix(urlStr, "https://cdn.jsdelivr.net/") {
-		return urlStr
-	}
-	if strings.HasPrefix(urlStr, "https://raw.githubusercontent.com/") {
-		parts := strings.SplitN(strings.TrimPrefix(urlStr, "https://raw.githubusercontent.com/"), "/", 4)
-		if len(parts) >= 3 {
-			user := parts[0]
-			repo := parts[1]
-			branch := parts[2]
-			path := ""
-			if len(parts) >= 4 {
-				path = parts[3]
-			}
-			return fmt.Sprintf("https://cdn.jsdelivr.net/gh/%s/%s@%s/%s", user, repo, branch, path)
-		}
-	}
-	return urlStr
-}
-
-// ApplyKeepHeader determines whether to keep headers in Map Local/echo-response.
-// When keepHeader is true, Map Local and echo-response entries should preserve
-// their header/content-type information in the output.
-// This affects how the converter generates output for these entry types.
-func ApplyKeepHeader(args map[string]string) bool {
-	return util.IsTrue(args["keepHeader"])
-}
-
 // ApplyMetadataOverrides overrides name, desc, icon, category from parameters.
 func ApplyMetadataOverrides(module *ParsedModule, args map[string]string) {
 	if n, ok := args["n"]; ok && n != "" {
@@ -411,6 +293,7 @@ func ApplyMetadataOverrides(module *ParsedModule, args map[string]string) {
 // CategoryForOutput returns the category/keyword value mapped for the target app:
 //   - Loon: category → emitted under "tag"
 //   - others: keyword → emitted under "category"
+//
 // Mirrors Rewrite-Parser.js metadata key remapping.
 func CategoryForOutput(module *ParsedModule, isLoon bool) (key, value string) {
 	if isLoon {
@@ -511,24 +394,6 @@ func ApplySniPm(rules []string, sni, pm string) []string {
 	return rules
 }
 
-// appShortName maps a target app string to the short name used in jsc convert
-// URLs: surge-module→surge, loon-plugin→loon, stash-stoverride→stash,
-// shadowrocket-module→shadowrocket. Falls back to the input lowercased.
-func appShortName(targetApp string) string {
-	t := strings.ToLower(targetApp)
-	switch {
-	case strings.Contains(t, "shadowrocket"):
-		return "shadowrocket"
-	case strings.Contains(t, "surge"):
-		return "surge"
-	case strings.Contains(t, "loon"):
-		return "loon"
-	case strings.Contains(t, "stash"):
-		return "stash"
-	}
-	return t
-}
-
 // keLeeIconURL is the icon name→URL mapping source (luestr/IconResource).
 const keLeeIconURL = "https://raw.githubusercontent.com/luestr/IconResource/main/KeLee_icon.json"
 
@@ -608,6 +473,7 @@ func randomIconURL(library string) string {
 // ApplyIconReplacement resolves the module icon per Rewrite-Parser.js:
 //   - if iconReplace is enabled (not "禁用"), use a random sticker from iconLibrary
 //   - else if the icon is a bare name (no "/"), resolve via KeLee mapping
+//
 // Called from the parser where an httpclient is available.
 func ApplyIconReplacement(ctx context.Context, module *ParsedModule, args map[string]string, client *httpclient.Client, isStashOrLoon bool) {
 	iconReplace := argsValue(args, "iconReplace", "禁用")
@@ -634,7 +500,6 @@ func argsValue(args map[string]string, key, fallback string) string {
 	return fallback
 }
 
-
 // LeadingTemplate holds the result of TakeLeadingTemplate.
 type LeadingTemplate struct {
 	Key  string // the template key (content inside {{{...}}})
@@ -643,7 +508,9 @@ type LeadingTemplate struct {
 
 // TakeLeadingTemplate extracts a leading {{{key}}} template from a line,
 // mirroring JS takeLeadingTemplate:
-//   "{{{toggle_key}}} script-path=..." → {Key: "toggle_key", Rest: " script-path=..."}
+//
+//	"{{{toggle_key}}} script-path=..." → {Key: "toggle_key", Rest: " script-path=..."}
+//
 // Returns nil if no template is found.
 func TakeLeadingTemplate(str string) *LeadingTemplate {
 	re := regexp.MustCompile(`^(\s*)\{\{\{([^{}]+)\}\}\}\s*(.*)$`)

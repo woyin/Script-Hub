@@ -12,27 +12,27 @@ import (
 const scriptHubRawBase = "https://raw.githubusercontent.com/Script-Hub-Org/Script-Hub/main"
 
 type surgeOutput struct {
-	URLRewrites     []string
-	HeaderRewrites  []string
-	Scripts         []string
-	MapLocal        []string
-	Rules           []string
-	MITM            []string
-	ForceHTTPHosts  []string
-	Panels          []string
-	Hosts           []string
-	Name            string
-	Desc            string
-	Icon            string
-	CategoryKey     string
-	CategoryValue   string
-	MetaExtra       []string
-	SgArg           []SgArgument
-	BodyRewrites    []BodyRewriteEntry
+	URLRewrites        []string
+	HeaderRewrites     []string
+	Scripts            []string
+	MapLocal           []string
+	Rules              []string
+	MITM               []string
+	ForceHTTPHosts     []string
+	Panels             []string
+	Hosts              []string
+	Name               string
+	Desc               string
+	Icon               string
+	CategoryKey        string
+	CategoryValue      string
+	MetaExtra          []string
+	SgArg              []SgArgument
+	BodyRewrites       []BodyRewriteEntry
 	ConditionalMITMKey string
-	SkipProxy     []string
-	RealIP        []string
-	HNAddMethod   string // %APPEND% or %INSERT%
+	SkipProxy          []string
+	RealIP             []string
+	HNAddMethod        string // %APPEND% or %INSERT%
 }
 
 // convertModules converts parsed modules to the target app format.
@@ -251,6 +251,7 @@ func loonBodyRewrite(br BodyRewriteEntry) string {
 //   - Surge/Shadowrocket: {key} → {{{key}}} (Surge toggle template)
 //   - Stash: {key} → actual value
 //   - Loon: only strip {{{ }}} wrappers
+//
 // {{{ and }}} are first normalized to { and } across all platforms.
 func applyArgumentsTemplate(body string, sgArg []SgArgument, platform string) string {
 	if len(sgArg) == 0 && platform != "loon" {
@@ -494,10 +495,10 @@ func (p *Parser) formatSurgeOutput(out surgeOutput) string {
 			hnKey = out.ConditionalMITMKey
 		}
 		addMethod := out.HNAddMethod
-			if addMethod == "" {
-				addMethod = "%APPEND%"
-			}
-			sb.WriteString(hnKey + " = " + addMethod + " " + strings.Join(out.MITM, ", ") + "\n")
+		if addMethod == "" {
+			addMethod = "%APPEND%"
+		}
+		sb.WriteString(hnKey + " = " + addMethod + " " + strings.Join(out.MITM, ", ") + "\n")
 	}
 
 	return sb.String()
@@ -1293,11 +1294,11 @@ func extractHostnames(pattern string) []string {
 	matches := re.FindStringSubmatch(pattern)
 	if len(matches) > 1 {
 		host := matches[1]
-	host = strings.ReplaceAll(host, `\.`, ".")
-	host = strings.ReplaceAll(host, `\-`, "-")
-	host = strings.ReplaceAll(host, `\_`, "_")
-	host = strings.ReplaceAll(host, `\`, "")
-	host = strings.TrimRight(host, ".-")
+		host = strings.ReplaceAll(host, `\.`, ".")
+		host = strings.ReplaceAll(host, `\-`, "-")
+		host = strings.ReplaceAll(host, `\_`, "_")
+		host = strings.ReplaceAll(host, `\`, "")
+		host = strings.TrimRight(host, ".-")
 		if host != "" && !strings.Contains(host, "(") && !strings.Contains(host, "[") &&
 			!strings.Contains(host, "*") && !strings.Contains(host, "?") && !strings.Contains(host, "+") {
 			hosts = append(hosts, host)

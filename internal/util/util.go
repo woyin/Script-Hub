@@ -16,7 +16,8 @@ func IsTrue(s string) bool {
 // GetArgArr 将 "+" 分隔的参数字符串拆分为数组。
 // 其中 "➕" 会被还原为真正的 "+" 字符，与 JS 端的 arg 解析行为一致。
 // 例如："keyword1+keyword2" → ["keyword1", "keyword2"]
-//       "a➕b+c" → ["a+b", "c"]
+//
+//	"a➕b+c" → ["a+b", "c"]
 func GetArgArr(s string) []string {
 	if s == "" {
 		return nil

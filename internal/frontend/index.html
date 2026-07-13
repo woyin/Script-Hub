@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Script Hub</title>
+<style>
+:root{color-scheme:light dark;font:16px system-ui,sans-serif}body{max-width:760px;margin:40px auto;padding:0 16px}label{display:block;margin:16px 0 6px}select,input,textarea,button{box-sizing:border-box;width:100%;font:inherit;padding:10px}textarea{min-height:180px;font-family:ui-monospace,monospace}button{margin-top:16px;cursor:pointer}small{opacity:.7}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}#status{min-height:1.5em;color:#b44}@media(max-width:540px){.row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<h1>Script Hub</h1>
+<p>规则集与重写配置格式转换。脚本 URL 保留原样，不转换 JavaScript 运行时。</p>
+<div class="row">
+<div><label for="source">来源格式</label><select id="source"><option value="all-module">自动识别重写</option><option value="qx-rewrite">QX Rewrite</option><option value="surge-module">Surge Module</option><option value="loon-plugin">Loon Plugin</option><option value="rule-set">规则集</option></select></div>
+<div><label for="target">目标格式</label><select id="target"><option value="surge-module">Surge Module</option><option value="loon-plugin">Loon Plugin</option><option value="stash-stoverride">Stash Override</option><option value="shadowrocket-module">Shadowrocket Module</option></select></div>
+</div>
+<label for="url">远程 URL <small>与粘贴内容二选一</small></label><input id="url" type="url" placeholder="https://example.com/rules.conf">
+<label for="input">粘贴内容</label><textarea id="input" placeholder="在此粘贴规则或重写配置"></textarea>
+<button id="convert">转换</button><p id="status" role="status"></p>
+<label for="output">输出</label><textarea id="output" readonly></textarea>
+<button id="copy" type="button">复制输出</button>
+<script>
+const base='__BASE_URL__';
+const source=document.querySelector('#source'),target=document.querySelector('#target');
+const targets={module:['surge-module','loon-plugin','stash-stoverride','shadowrocket-module'],rule:['surge-rule-set','loon-rule-set','stash-rule-set','shadowrocket-rule-set','surge-domain-set','stash-domain-set']};
+function setTargets(){const values=source.value==='rule-set'?targets.rule:targets.module;target.replaceChildren(...values.map(value=>{const o=document.createElement('option');o.value=value;o.textContent=value;return o}))}source.addEventListener('change',setTargets);
+document.querySelector('#convert').addEventListener('click',async()=>{const status=document.querySelector('#status'),output=document.querySelector('#output'),text=document.querySelector('#input').value.trim(),remote=document.querySelector('#url').value.trim();status.textContent='';output.value='';if(!text&&!remote){status.textContent='请输入 URL 或粘贴内容';return}if(remote){try{const u=new URL(remote);if(!['http:','https:'].includes(u.protocol))throw 0}catch{status.textContent='URL 必须使用 http 或 https';return}}const input=remote||'http://local.text';const q=new URLSearchParams({type:source.value,target:target.value});if(text)q.set('localtext',text);try{const r=await fetch(`${base}/file/_start_/${encodeURIComponent(input)}/_end_/?${q}`);const body=await r.text();if(!r.ok)throw new Error(body||`HTTP ${r.status}`);output.value=body}catch(e){status.textContent=e.message}});
+document.querySelector('#copy').addEventListener('click',async()=>{await navigator.clipboard.writeText(document.querySelector('#output').value);document.querySelector('#status').textContent='已复制'});
+</script>
+</body>
+</html>

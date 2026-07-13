@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/script-hub-org/script-hub/internal/config"
-	"github.com/script-hub-org/script-hub/internal/eval"
 	"github.com/script-hub-org/script-hub/internal/httpclient"
 	"github.com/script-hub-org/script-hub/internal/types"
 	"github.com/script-hub-org/script-hub/internal/util"
@@ -56,13 +55,13 @@ func NewParser(cfg *config.Config) *Parser {
 
 // ruleLine represents a single parsed rule line.
 type ruleLine struct {
-	RuleType   string
-	Value      string
-	NoResolve  bool
-	ExtMatch   string
-	Policy     string
-	Raw        string
-	Excluded   bool
+	RuleType    string
+	Value       string
+	NoResolve   bool
+	ExtMatch    string
+	Policy      string
+	Raw         string
+	Excluded    bool
 	Unsupported bool
 }
 
@@ -115,10 +114,6 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 		}, nil
 	}
 
-	// Apply eval operations on original content (before conversion)
-	evalParams := eval.EvalParamsFromArgs(input.Arguments)
-	body = eval.ApplyBeforeConversion(ctx, body, evalParams, p.client)
-
 	// Parse and convert rules
 	rules := p.parseRules(body, input)
 
@@ -130,13 +125,10 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 	// Collapse the JS-style excluded marker spacing that may survive in output
 	output = strings.ReplaceAll(output, " ;#", " #")
 
-	// Apply eval operations on converted content (after conversion)
-	output = eval.ApplyAfterConversion(ctx, output, evalParams, p.client)
-
 	return ParseOutput{
 		Content: output,
 		Headers: map[string]string{
-			"Content-Type":                "text/plain; charset=utf-8",
+			"Content-Type":                 "text/plain; charset=utf-8",
 			"Access-Control-Allow-Origin":  "*",
 			"Access-Control-Allow-Methods": "POST,GET,OPTIONS,PUT,DELETE",
 			"Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept",
@@ -617,8 +609,6 @@ func hoStToHost(s string) string {
 }
 
 // Helper functions
-
-
 
 func decodeURL(s string) (string, error) {
 	// Simple URL decode - the URLs in the request are already mostly decoded

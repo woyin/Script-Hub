@@ -17,12 +17,12 @@ type RuleFlags struct {
 
 // ruleNode represents a parsed rule tree node.
 type ruleNode struct {
-	Operator       string
-	NodeType       string // "LOGICAL" or "VALUE"
-	Value          string
-	Flags          RuleFlags
-	Children       []*ruleNode
-	RoutingPolicy  string
+	Operator         string
+	NodeType         string // "LOGICAL" or "VALUE"
+	Value            string
+	Flags            RuleFlags
+	Children         []*ruleNode
+	RoutingPolicy    string
 	FlagsInitialized bool
 }
 
@@ -125,9 +125,9 @@ var matchingParams = map[string]string{
 var rejectPolicyRe = regexp.MustCompile(`(?i)^REJECT(-[A-Z]+)*$`)
 
 type parser struct {
-	tokens  []token
-	pos     int
-	input   string
+	tokens []token
+	pos    int
+	input  string
 }
 
 func parseRule(input string) (*ruleNode, error) {

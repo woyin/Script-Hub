@@ -16,8 +16,8 @@ const (
 	PlatformLoon         Platform = "loon"
 	PlatformStash        Platform = "stash"
 	PlatformShadowrocket Platform = "shadowrocket"
-	PlatformEgern        Platform = "egern"   // Egern 是 Surge 兼容客户端
-	PlatformLanceX       Platform = "lancex"  // LanceX 是 Surge 兼容客户端
+	PlatformEgern        Platform = "egern"  // Egern 是 Surge 兼容客户端
+	PlatformLanceX       Platform = "lancex" // LanceX 是 Surge 兼容客户端
 )
 
 // ── 重写转换的目标格式 ──
@@ -26,23 +26,23 @@ const (
 	TargetStashStoverride     = "stash-stoverride"      // Stash 覆写 (.stoverride)
 	TargetLoonPlugin          = "loon-plugin"           // Loon 插件 (.plugin)
 	TargetShadowrocketModule  = "shadowrocket-module"   // Shadowrocket 模块 (.sgmodule)
-	TargetSurgeRuleSet        = "surge-rule-set"         // Surge 规则集
-	TargetStashRuleSet        = "stash-rule-set"         // Stash 规则集
-	TargetLoonRuleSet         = "loon-rule-set"          // Loon 规则集
-	TargetShadowrocketRuleSet = "shadowrocket-rule-set"  // Shadowrocket 规则集
-	TargetSurgeDomainSet      = "surge-domain-set"       // Surge 域名集
-	TargetSurgeDomainSet2     = "surge-domain-set2"      // 无法转换为域名集的剩余规则集
-	TargetStashDomainSet      = "stash-domain-set"       // Stash 域名集
-	TargetStashDomainSet2     = "stash-domain-set2"      // 无法转换为域名集的剩余规则集
+	TargetSurgeRuleSet        = "surge-rule-set"        // Surge 规则集
+	TargetStashRuleSet        = "stash-rule-set"        // Stash 规则集
+	TargetLoonRuleSet         = "loon-rule-set"         // Loon 规则集
+	TargetShadowrocketRuleSet = "shadowrocket-rule-set" // Shadowrocket 规则集
+	TargetSurgeDomainSet      = "surge-domain-set"      // Surge 域名集
+	TargetSurgeDomainSet2     = "surge-domain-set2"     // 无法转换为域名集的剩余规则集
+	TargetStashDomainSet      = "stash-domain-set"      // Stash 域名集
+	TargetStashDomainSet2     = "stash-domain-set2"     // 无法转换为域名集的剩余规则集
 )
 
 // ── 重写解析的来源格式 ──
 const (
-	SourceTypeQXRewrite   = "qx-rewrite"    // QX 重写规则
-	SourceTypeSurgeModule = "surge-module"  // Surge 模块
-	SourceTypeLoonPlugin  = "loon-plugin"   // Loon 插件
-	SourceTypeAllModule   = "all-module"    // 所有模块格式（自动识别）
-	SourceTypeRuleSet     = "rule-set"      // 规则集
+	SourceTypeQXRewrite   = "qx-rewrite"   // QX 重写规则
+	SourceTypeSurgeModule = "surge-module" // Surge 模块
+	SourceTypeLoonPlugin  = "loon-plugin"  // Loon 插件
+	SourceTypeAllModule   = "all-module"   // 所有模块格式（自动识别）
+	SourceTypeRuleSet     = "rule-set"     // 规则集
 )
 
 // Config 保存所有运行时配置参数
@@ -51,7 +51,6 @@ type Config struct {
 	Host        string // 监听地址（默认 0.0.0.0）
 	HTTPTimeout int    // HTTP 请求超时秒数（默认 20）
 	MaxBodyKB   int    // 最大响应体 KB 数（默认 600）
-	ExportHTML  string // 静态 HTML 导出目录（为空则启动 HTTP 服务）
 }
 
 // LoadConfig 从环境变量加载配置，未设置的使用默认值。
@@ -65,7 +64,6 @@ func LoadConfig() *Config {
 		Host:        host,
 		HTTPTimeout: httpTimeout,
 		MaxBodyKB:   getEnvInt("PARSER_BODY_MAX", 600),
-		ExportHTML:  os.Getenv("EXPORT_HTML"),
 	}
 }
 

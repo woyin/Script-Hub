@@ -370,6 +370,7 @@ func parseCommaArgument(s string) []SgArgument {
 		Tag:   strings.TrimSpace(m[4]),
 	}}
 }
+
 // JS trigger: /[=,]\s*script-name\s*=.+/
 func parsePanelLine(line string) *PanelInfo {
 	leadingTemplateIsNameOnly := false
@@ -422,15 +423,16 @@ func parseHostLine(line string) *HostInfo {
 
 // parseQXRewrite parses Quantumult X rewrite format.
 // QX format examples:
-//   ^https?://example.com url request-header (\r\n)User-Agent:.+(\r\n) request-header $1User-Agent: Chrome$2
-//   ^https?://example.com url response-body old response-body new
-//   ^https?://example.com url echo-response text/plain https://example.com/data
-//   ^https?://example.com url reject
-//   ^https?://example.com url reject-dict
-//   ^https?://example.com url reject-img
-//   ^https?://example.com url 302 https://redirect.com
-//   ^https?://example.com url script-request-header script-path
-//   ^https?://example.com url script-response-body script-path
+//
+//	^https?://example.com url request-header (\r\n)User-Agent:.+(\r\n) request-header $1User-Agent: Chrome$2
+//	^https?://example.com url response-body old response-body new
+//	^https?://example.com url echo-response text/plain https://example.com/data
+//	^https?://example.com url reject
+//	^https?://example.com url reject-dict
+//	^https?://example.com url reject-img
+//	^https?://example.com url 302 https://redirect.com
+//	^https?://example.com url script-request-header script-path
+//	^https?://example.com url script-response-body script-path
 func (p *Parser) parseQXRewrite(content string, args map[string]string) []ParsedModule {
 	var module ParsedModule
 	module.Name = "QX-Rewrite"
