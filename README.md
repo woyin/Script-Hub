@@ -52,21 +52,18 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -trimpath -o scr
 
 ### Docker
 
-```bash
-docker build -t script-hub .
-docker run -p 9100:9100 script-hub
-```
-
-多架构构建：
-
-```bash
-docker buildx build --platform linux/amd64,linux/arm64 -t script-hub .
-```
-
-或从 GHCR 拉取（推送至 `go-rewrite` 分支时自动构建）：
+直接拉取预构建镜像（推荐）：
 
 ```bash
 docker pull ghcr.io/woyin/script-hub/script-hub:latest
+docker run -p 9100:9100 ghcr.io/woyin/script-hub/script-hub:latest
+```
+
+或本地构建：
+
+```bash
+docker build -t script-hub .
+docker run -p 9100:9100 script-hub
 ```
 
 ### 导出静态 HTML

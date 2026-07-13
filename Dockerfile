@@ -21,9 +21,9 @@ RUN go mod download
 
 COPY . .
 
-ARG TARGETOS TARGETARCH
+ARG TARGETOS TARGETARCH VERSION=dev
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -ldflags="-s -w" -trimpath -o /script-hub .
+    go build -ldflags="-s -w -X main.version=${VERSION}" -trimpath -o /script-hub .
 
 # --- 阶段 2: 运行（scratch 零基础层，~10MB 最终镜像） ---
 FROM scratch
