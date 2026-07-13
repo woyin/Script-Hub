@@ -1,6 +1,8 @@
 # Script Hub (Go)
 
-规则集与重写配置格式转换服务。
+规则集与重写配置格式转换服务。基于 [Script-Hub-Org/Script-Hub](https://github.com/Script-Hub-Org/Script-Hub) 重写并精简为 Go 服务。
+
+本项目不是原项目的官方 Go 版本。功能目标限定为客户端之间的规则集与重写配置格式转换。
 
 ## 产品边界
 
@@ -9,7 +11,7 @@
 - QX Rewrite、Surge Module、Loon Plugin 自动识别与互转
 - 输出 Surge Module、Loon Plugin、Stash Override、Shadowrocket Module
 - 常见规则集转换为 Surge、Loon、Stash、Shadowrocket 规则集或域名集
-- 远程 HTTP(S) URL和本地粘贴内容输入
+- 远程 HTTP(S) URL 和本地粘贴内容输入
 - 简单 Web UI、Docker 镜像、跨平台 Release
 
 不提供：
@@ -88,6 +90,34 @@ go test ./...
 go vet ./...
 ```
 
-## License
+## 上游项目与致谢
 
-[GNU General Public License v3.0](LICENSE)
+本项目衍生自 [Script-Hub-Org/Script-Hub](https://github.com/Script-Hub-Org/Script-Hub)。感谢原项目作者与所有贡献者完成规则解析、客户端格式适配、脚本兼容研究及长期维护；本项目的转换行为、格式定义和部分实现思路建立在这些工作之上。
+
+也感谢原项目 README 中列出的相关作者与项目，包括：
+
+- [Chavy's Env.js](https://github.com/chavyleung/scripts)
+- [KOP-XIAO/QuantumultX](https://github.com/KOP-XIAO/QuantumultX)
+- [xream](https://github.com/xream)
+- [keywos](https://github.com/keywos)
+- [mieqq](https://github.com/mieqq)
+- [Maasea](https://github.com/Maasea)
+- [KeiKinn/StickerOnScreen](https://github.com/KeiKinn/StickerOnScreen)
+- [Toperlock/Quantumult](https://github.com/Toperlock/Quantumult)
+
+完整历史与贡献者名单以[原项目](https://github.com/Script-Hub-Org/Script-Hub)为准。
+
+## 开源协议
+
+原项目在 `package.json` 中声明 `GPL-3.0`，并附带 GNU General Public License Version 3。当前项目属于其修改和重写版本，因此继续采用 **GNU General Public License v3.0 only（GPL-3.0-only）**，不改用更宽松或闭源协议。
+
+许可证全文见 [LICENSE](LICENSE)。使用、修改或分发本项目时，须遵守 GPL v3，包括但不限于：
+
+- 保留适用的版权、许可证和免责声明；
+- 标明本项目包含对原项目的修改；
+- 分发目标代码时，按 GPL v3 提供对应源代码；
+- 对本项目衍生作品整体继续使用 GPL v3 兼容条款。
+
+原项目及其贡献者的版权归各自权利人所有。本说明不构成原作者对本项目的背书，也不取代 `LICENSE` 正文。
+
+SPDX-License-Identifier: `GPL-3.0-only`
