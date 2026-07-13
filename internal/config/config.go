@@ -47,33 +47,25 @@ const (
 
 // Config 保存所有运行时配置参数
 type Config struct {
-	Port        string // 正式服务监听端口（默认 9100）
-	BetaPort    string // Beta 服务监听端口（默认 9101）
+	Port        string // 监听端口（默认 9100）
 	Host        string // 监听地址（默认 0.0.0.0）
-	BaseURL     string // 正式服务对外 URL
-	BetaBaseURL string // Beta 服务对外 URL
+	BaseURL     string // 对外 URL
 	HTTPTimeout int    // HTTP 请求超时秒数（默认 20）
 	MaxBodyKB   int    // 最大响应体 KB 数（默认 600）
 	ExportHTML  string // 静态 HTML 导出目录（为空则启动 HTTP 服务）
 }
 
 // LoadConfig 从环境变量加载配置，未设置的使用默认值。
-// 默认值与 JS 版 service.js 完全对齐。
 func LoadConfig() *Config {
 	port := getEnv("PORT", "9100")
-	betaPort := getEnv("BETA_PORT", "9101")
 	host := getEnv("HOST", "0.0.0.0")
-	baseURL := getEnv("BASE_URL", "http://127.0.0.1:"+port)
-	betaBaseURL := getEnv("BETA_BASE_URL", "http://127.0.0.1:"+betaPort)
-	// HTTP_TIMEOUT 对应 JS 版的 HTTP_TIMEOUT 环境变量（单位：秒）
+	baseURL := getEnv("BASE_URL", "https://127.0.0.1:"+port)
 	httpTimeout := getEnvInt("HTTP_TIMEOUT", 20)
 
 	return &Config{
 		Port:        port,
-		BetaPort:    betaPort,
 		Host:        host,
 		BaseURL:     baseURL,
-		BetaBaseURL: betaBaseURL,
 		HTTPTimeout: httpTimeout,
 		MaxBodyKB:   getEnvInt("PARSER_BODY_MAX", 600),
 		ExportHTML:  os.Getenv("EXPORT_HTML"),

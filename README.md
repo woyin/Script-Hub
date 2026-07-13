@@ -75,18 +75,16 @@ docker pull ghcr.io/woyin/script-hub/script-hub:latest
 
 ```bash
 EXPORT_HTML=./public ./script-hub
-# 输出 public/index.html 和 public/beta/index.html
+# 输出 public/index.html
 ```
 
 ## 环境变量
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `PORT` | `9100` | 主服务端口 |
-| `BETA_PORT` | `9101` | Beta 服务端口 |
+| `PORT` | `9100` | 服务端口 |
 | `HOST` | `0.0.0.0` | 监听地址 |
-| `BASE_URL` | `http://127.0.0.1:PORT` | 对外可访问的 URL |
-| `BETA_BASE_URL` | `http://127.0.0.1:BETA_PORT` | Beta 对外 URL |
+| `BASE_URL` | `https://127.0.0.1:PORT` | 对外可访问的 URL |
 | `HTTP_TIMEOUT` | `20` | HTTP 请求超时（秒） |
 | `PARSER_BODY_MAX` | `600` | Mock 响应体最大 KB |
 | `EXPORT_HTML` | *(空)* | 设置后导出静态 HTML 到指定目录 |

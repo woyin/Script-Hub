@@ -26,19 +26,13 @@ import (
 // 对应 JS 版 scriptMap.js 中 script-hub.js 的路由规则。
 func (s *Server) scriptHubHandler(w http.ResponseWriter, r *http.Request) {
 	scriptURL := buildScriptHubURL(r)
-	log.Printf("scriptHubHandler url: %s", scriptURL)
 
 	if strings.Contains(scriptURL, "/reload") {
 		s.reloadHandler(w, r)
 		return
 	}
 
-	baseURL := s.cfg.BaseURL
-	if s.isBeta {
-		baseURL = s.cfg.BetaBaseURL
-	}
-
-	html := frontend.GenerateHTML(baseURL)
+	html := frontend.GenerateHTML(s.cfg.BaseURL)
 	w.Header().Set("Content-Type", "text/html; charset=UTF-8")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Write([]byte(html))
@@ -57,7 +51,6 @@ func (s *Server) reloadHandler(w http.ResponseWriter, r *http.Request) {
 // URL 格式: /file/_start_/{encoded_url}/_end_/?type={source_type}&target={target_app}
 func (s *Server) rewriteParserHandler(w http.ResponseWriter, r *http.Request) {
 	scriptURL := buildScriptHubURL(r)
-	log.Printf("rewriteParserHandler url: %s", scriptURL)
 
 	req, _ := extractReqFromURL(scriptURL)
 	urlArg := extractURLArg(scriptURL)
@@ -86,7 +79,6 @@ func (s *Server) rewriteParserHandler(w http.ResponseWriter, r *http.Request) {
 // 当 target 为通用 "rule-set" 时，自动从 User-Agent 推断目标平台。
 func (s *Server) ruleParserHandler(w http.ResponseWriter, r *http.Request) {
 	scriptURL := buildScriptHubURL(r)
-	log.Printf("ruleParserHandler url: %s", scriptURL)
 
 	req, _ := extractReqFromURL(scriptURL)
 	urlArg := extractURLArg(scriptURL)
@@ -122,7 +114,6 @@ func (s *Server) ruleParserHandler(w http.ResponseWriter, r *http.Request) {
 // URL 格式: /convert/_start_/{url}/_end_/?type={source_type}&target-app={target}
 func (s *Server) scriptConverterHandler(w http.ResponseWriter, r *http.Request) {
 	scriptURL := buildScriptHubURL(r)
-	log.Printf("scriptConverterHandler url: %s", scriptURL)
 
 	req := extractConvertReq(scriptURL)
 	urlArg := extractURLArg(scriptURL)

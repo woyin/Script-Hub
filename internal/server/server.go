@@ -15,25 +15,14 @@ type Server struct {
 	httpServer *http.Server
 	router     *chi.Mux
 	cfg        *config.Config
-	isBeta     bool // 是否为 Beta 服务实例
 }
 
-// New 创建正式服务实例。
+// New 创建服务实例。
 func New(cfg *config.Config) *Server {
-	return newServer(cfg, false)
-}
-
-// NewBeta 创建 Beta 服务实例，镜像 JS 版 BETA_PORT 双服务模式。
-func NewBeta(cfg *config.Config) *Server {
-	return newServer(cfg, true)
-}
-
-func newServer(cfg *config.Config, isBeta bool) *Server {
 	r := chi.NewRouter()
 	s := &Server{
 		router: r,
 		cfg:    cfg,
-		isBeta: isBeta,
 	}
 	s.setupRoutes()
 	return s
