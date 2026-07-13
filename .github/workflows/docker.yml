@@ -2,7 +2,7 @@ name: Build & Push Docker Image
 
 on:
   push:
-    branches: [go-rewrite]
+    branches: [main]
     paths:
       - "**.go"
       - "go.mod"

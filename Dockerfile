@@ -12,7 +12,7 @@
 #   HTTP_TIMEOUT 请求超时秒数（默认 20）
 
 # --- 阶段 1: 编译 ---
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /build
 
