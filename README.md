@@ -81,7 +81,7 @@ EXPORT_HTML=./public ./script-hub
 |------|--------|------|
 | `PORT` | `9100` | 服务端口 |
 | `HOST` | `0.0.0.0` | 监听地址 |
-| `BASE_URL` | `https://127.0.0.1:PORT` | 对外可访问的 URL |
+| `BASE_URL` | `https://127.0.0.1:PORT` | 仅静态导出模式需要，指定目标 URL |
 | `HTTP_TIMEOUT` | `20` | HTTP 请求超时（秒） |
 | `PARSER_BODY_MAX` | `600` | Mock 响应体最大 KB |
 | `EXPORT_HTML` | *(空)* | 设置后导出静态 HTML 到指定目录 |

@@ -43,7 +43,12 @@ func main() {
 		if err := os.MkdirAll(exportDir, 0755); err != nil {
 			log.Fatalf("创建导出目录失败: %v", err)
 		}
-		html := frontend.GenerateHTML(cfg.BaseURL)
+		// 导出模式下无 HTTP 请求，需通过 BASE_URL 环境变量指定目标地址
+		baseURL := os.Getenv("BASE_URL")
+		if baseURL == "" {
+			baseURL = "https://127.0.0.1:" + cfg.Port
+		}
+		html := frontend.GenerateHTML(baseURL)
 		if err := os.WriteFile(filepath.Join(exportDir, "index.html"), []byte(html), 0644); err != nil {
 			log.Fatalf("写入 index.html 失败: %v", err)
 		}

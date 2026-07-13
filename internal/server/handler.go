@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/script-hub-org/script-hub/internal/config"
 	"github.com/script-hub-org/script-hub/internal/converter"
 	"github.com/script-hub-org/script-hub/internal/frontend"
 	"github.com/script-hub-org/script-hub/internal/rewrite"
@@ -32,7 +31,8 @@ func (s *Server) scriptHubHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	html := frontend.GenerateHTML(s.cfg.BaseURL)
+	baseURL := baseURLFromRequest(r)
+	html := frontend.GenerateHTML(baseURL)
 	w.Header().Set("Content-Type", "text/html; charset=UTF-8")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Write([]byte(html))
@@ -71,7 +71,7 @@ func (s *Server) rewriteParserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeResponse(w, output, s.cfg)
+	writeResponse(w, output, r)
 }
 
 // ruleParserHandler 处理规则集转换请求。
@@ -106,7 +106,7 @@ func (s *Server) ruleParserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeResponse(w, output, s.cfg)
+	writeResponse(w, output, r)
 }
 
 // scriptConverterHandler 处理脚本转换请求（QX脚本 → 目标平台脚本）。
@@ -145,15 +145,15 @@ func (s *Server) scriptConverterHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	writeResponse(w, output, s.cfg)
+	writeResponse(w, output, r)
 }
 
 // writeResponse 将解析器输出写入 HTTP 响应。
 // 统一处理：设置响应头、将 script.hub URL 替换为实际服务地址。
 // 对应 JS 版 service.js 中的 ctx.body 替换逻辑。
-func writeResponse(w http.ResponseWriter, output types.ResponseWriter, cfg *config.Config) {
+func writeResponse(w http.ResponseWriter, output types.ResponseWriter, r *http.Request) {
 	resp := output.GetResponse()
-	baseURL := cfg.BaseURL
+	baseURL := baseURLFromRequest(r)
 
 	for k, v := range resp.Headers {
 		w.Header().Set(k, v)
@@ -207,4 +207,14 @@ func inferTargetFromUA(r *http.Request) string {
 		return "shadowrocket-rule-set"
 	}
 	return ""
+}
+
+// baseURLFromRequest 从请求的 Host header 自动推导服务地址。
+// 优先使用 X-Forwarded-Proto（反向代理场景），否则默认 https。
+func baseURLFromRequest(r *http.Request) string {
+	proto := r.Header.Get("X-Forwarded-Proto")
+	if proto == "" {
+		proto = "https"
+	}
+	return proto + "://" + r.Host
 }

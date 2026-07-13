@@ -49,7 +49,6 @@ const (
 type Config struct {
 	Port        string // 监听端口（默认 9100）
 	Host        string // 监听地址（默认 0.0.0.0）
-	BaseURL     string // 对外 URL
 	HTTPTimeout int    // HTTP 请求超时秒数（默认 20）
 	MaxBodyKB   int    // 最大响应体 KB 数（默认 600）
 	ExportHTML  string // 静态 HTML 导出目录（为空则启动 HTTP 服务）
@@ -59,13 +58,11 @@ type Config struct {
 func LoadConfig() *Config {
 	port := getEnv("PORT", "9100")
 	host := getEnv("HOST", "0.0.0.0")
-	baseURL := getEnv("BASE_URL", "https://127.0.0.1:"+port)
 	httpTimeout := getEnvInt("HTTP_TIMEOUT", 20)
 
 	return &Config{
 		Port:        port,
 		Host:        host,
-		BaseURL:     baseURL,
 		HTTPTimeout: httpTimeout,
 		MaxBodyKB:   getEnvInt("PARSER_BODY_MAX", 600),
 		ExportHTML:  os.Getenv("EXPORT_HTML"),
