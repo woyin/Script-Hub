@@ -28,8 +28,13 @@ import (
 	"github.com/script-hub-org/script-hub/internal/server"
 )
 
+// version 通过 -ldflags -X main.version=... 注入，未设置时为 dev
+var version = "dev"
+
 func main() {
 	cfg := config.LoadConfig()
+
+	log.Printf("Script Hub %s", version)
 
 	// ── 静态导出模式 ──
 	// 设置 EXPORT_HTML 目录路径时，仅导出 HTML 文件后退出，不启动 HTTP 服务。
