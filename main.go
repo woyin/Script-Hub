@@ -59,7 +59,7 @@ func main() {
 
 	go func() {
 		addr := fmt.Sprintf("%s:%s", cfg.Host, cfg.Port)
-		log.Printf("Script Hub 启动于 %s, BASE URL: %s", addr, cfg.BaseURL)
+		log.Printf("Script Hub 启动于 %s", addr)
 		if err := srv.Start(addr); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("服务启动失败: %v", err)
 		}
