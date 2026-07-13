@@ -48,6 +48,7 @@ jobs:
           fi
 
       - name: Build
+        id: build
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -56,7 +57,7 @@ jobs:
           ext=""
           if [[ "$GOOS" == "windows" ]]; then ext=".exe"; fi
           out="${{ env.BINARY_NAME }}-${GOOS}-${GOARCH}${ext}"
-          go build -ldflags="-s -w -X main.version=${{ steps.version.tag }}" -trimpath -o "$out" .
+          go build -ldflags="-s -w -X main.version=${{ steps.version.outputs.tag }}" -trimpath -o "$out" .
           echo "artifact=$out" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
