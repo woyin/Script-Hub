@@ -248,7 +248,14 @@ func (p *Parser) parseRuleLine(line string, input ParseInput) *ruleLine {
 	// Logical rules (OR/AND/NOT) are emitted verbatim, no further parsing
 	upperFirst := strings.ToUpper(line)
 	if strings.HasPrefix(upperFirst, "OR") || strings.HasPrefix(upperFirst, "AND") || strings.HasPrefix(upperFirst, "NOT") {
-		rl.RuleType = upperFirst
+		// 仅提取规则类型 token（OR/AND/NOT），而非整行大写 — 否则
+		// formatOutput 中的 isLogical 精确匹配会失败，导致逻辑规则被
+		// 错误地走默认格式化路径并重复输出（regression 已被测试覆盖）。
+		if idx := strings.IndexAny(upperFirst, ", \t"); idx > 0 {
+			rl.RuleType = upperFirst[:idx]
+		} else {
+			rl.RuleType = upperFirst
+		}
 		rl.Value = strings.ReplaceAll(line, "t&zd;", ",")
 		rl.Raw = rl.Value
 		return rl
@@ -375,11 +382,11 @@ func (p *Parser) formatOutput(rules []ruleLine, targetApp string) string {
 
 		var formatted string
 		switch {
-		case isStash && !isDomainSet:
+		case isStash:
 			formatted = formatStashRule(rl)
-		case isLoon && !isDomainSet:
+		case isLoon:
 			formatted = formatLoonRule(rl)
-		case isSurge && !isDomainSet:
+		case isSurge:
 			formatted = formatSurgeRule(rl, isShadowrocket)
 		default:
 			formatted = formatSurgeRule(rl, isShadowrocket)
