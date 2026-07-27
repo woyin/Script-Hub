@@ -1065,6 +1065,11 @@ func convertSurgeHeaderRewriteToLoon(line string) string {
 	return line
 }
 
+// convertLoonScript converts a script entry to a Loon [Script] line. Generic
+// scripts (Surge "generic" tile type) are dropped here per upstream JS, since
+// Loon surfaces them differently. Cron scripts use the Loon cron form:
+//   cron "<expr>" script-path=URL, timeout=N, tag=name, enable=true, img-url=...
+// Other types map to type=http-{request,response}[,requires-body=true].
 func (p *Parser) convertLoonScript(rw ParsedRewrite) string {
 	// Per upstream Rewrite-Parser.js, Loon does not emit [Script] entries for
 	// "generic" tiles (those are pushed as-is to otherRule / handled as tiles).
@@ -1484,6 +1489,10 @@ func isQXRewriteKeyword(kw string) bool {
 
 // --- Stash ---
 
+// convertToStashFormat builds the Stash stoverride YAML by reusing the Surge
+// IR (surgeOutput) and then emitting it through formatStashOutput. Stash is
+// Surge-compatible at the IR level but diverges in serialization (YAML with
+// multi-line string blocks) and in script/arguments handling.
 func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, args map[string]string) string {
 	out := surgeOutput{}
 	delComments := util.IsTrue(args["del"])
@@ -1536,6 +1545,10 @@ func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, arg
 	return applyArgumentsTemplate(p.formatStashOutput(out, modules, args), out.SgArg, "stash")
 }
 
+// formatStashOutput serializes the Surge IR into Stash's YAML stoverride format:
+//   - top-level metadata uses YAML block scalars (name: |-\n  ...)
+//   - [Script] / [URL Rewrite] / [Header Rewrite] / [MITM] become YAML list keys
+//   - #!arguments are emitted via applyArgumentsTemplate("stash") substitution
 func (p *Parser) formatStashOutput(out surgeOutput, modules []ParsedModule, args map[string]string) string {
 	var sb strings.Builder
 
@@ -1715,6 +1728,10 @@ func (p *Parser) formatStashOutput(out surgeOutput, modules []ParsedModule, args
 
 // --- Generic fallback ---
 
+// convertToGenericFormat is the fallback target for unknown target apps. It
+// emits a best-effort plain-text dump (rewrites, scripts, rules, MITM) without
+// any target-specific normalization. Used when targetApp doesn't match any of
+// the known clients (surge/loon/qx/stash/...).
 func (p *Parser) convertToGenericFormat(modules []ParsedModule, target string, args map[string]string) string {
 	var rewrites, rules, scripts, mitm []string
 	var name, desc string
@@ -1823,6 +1840,10 @@ func sanitizeName(pattern string) string {
 }
 
 // parseSurgeSections parses content into sections like [Rule], [Script], etc.
+// parseSurgeSections splits Surge/Loon module content into a section map keyed
+// by the bracketed header (e.g. "Rule", "Script", "MITM"]). Lines outside any
+// section are collected under the empty key "". Mirrors a lightweight subset of
+// INI parsing tolerant of comments and blank lines.
 func parseSurgeSections(content string) map[string][]string {
 	sections := make(map[string][]string)
 	var currentSection string
@@ -1904,6 +1925,9 @@ func uniqueStrings(s []string) []string {
 // /^"(.+)"$/.replace -> $1 then /^'(.+)'$/.replace -> $1. Unlike strings.Trim,
 // it only strips when the first and last characters form a matching pair, so
 // internal quotes are preserved untouched.
+// stripMatchingOuterQuotes removes a single matching pair of surrounding
+// double or single quotes from value, if both ends are quoted with the same
+// character. Used to normalize header-rewrite / mock values during parsing.
 func stripMatchingOuterQuotes(value string) string {
 	if len(value) >= 2 {
 		first, last := value[0], value[len(value)-1]
@@ -1917,6 +1941,9 @@ func stripMatchingOuterQuotes(value string) string {
 	return value
 }
 
+// filterCommented returns lines with comment lines removed, except #! directive
+// lines (e.g. #!arguments, #!error=404) which carry semantic meaning and must
+// be preserved even when comment stripping (del=true) is requested.
 func filterCommented(lines []string) []string {
 	var result []string
 	for _, line := range lines {
