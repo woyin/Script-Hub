@@ -22,6 +22,32 @@ import (
 	"github.com/script-hub-org/script-hub/internal/util"
 )
 
+// 预编译正则：避免在 parseRules 的逐行循环中重复编译（大型规则集性能优化）。
+// 这些正则在 JS 版 rule-parser.js 中也是字面量常量，此处提升为包级 *regexp.Regexp。
+var (
+	// 预处理行变换（按 JS 顺序应用）
+	ruleRePayload       = regexp.MustCompile(`^payload:`)
+	ruleReCommentPrefix = regexp.MustCompile(`^ *(#|;|//)`)
+	ruleReDashPrefix    = regexp.MustCompile(`^ *- *`)
+	ruleReInlineComment = regexp.MustCompile(`(^[^#].+)\x20+//.+`)
+	ruleReCommaGuard    = regexp.MustCompile(`(\{[0-9]+),([0-9]*\})`)
+	ruleReScriptLine    = regexp.MustCompile(`^[^U].*(\[|=|{|\\|/.*\.js)`)
+	ruleReShorthand     = regexp.MustCompile(`^(\.|\*|\+)\.?`)
+	ruleReIPRule        = regexp.MustCompile(`^ip6?-[ca]`)
+	ruleReDropComment   = regexp.MustCompile(`^#.+`)
+
+	// 自动检测 CIDR（用于无逗号分隔的行）
+	ruleReCIDR          = regexp.MustCompile(`[0-9]/[0-9]`)
+	ruleReCIDR6         = regexp.MustCompile(`([0-9]|[a-fA-F]):([0-9]|[a-fA-F])`)
+
+	// formatDomainSet 使用的多行正则
+	ruleReDomain        = regexp.MustCompile(`(?im)^DOMAIN,`)
+	ruleReDomainSuffix  = regexp.MustCompile(`(?im)^DOMAIN-SUFFIX,`)
+	ruleReStashDomain   = regexp.MustCompile(`(?im)^  - DOMAIN,`)
+	ruleReStashDomainSF = regexp.MustCompile(`(?im)^  - DOMAIN-SUFFIX,`)
+	ruleReStripPolicy   = regexp.MustCompile(`^([^,]*),?.*`)
+)
+
 // ParseInput contains the input parameters for rule parsing.
 type ParseInput struct {
 	URLs      []string
@@ -148,15 +174,8 @@ func (p *Parser) parseRules(content string, input ParseInput) []ruleLine {
 	lines := strings.Split(content, "\n")
 	var rules []ruleLine
 
-	// Regex to strip comments
-	commentRegex := regexp.MustCompile(`(^[^#].+)\x20+//.+`)
-	// Regex to detect CIDR notation
-	cidrRegex := regexp.MustCompile(`[0-9]/[0-9]`)
-	cidr6Regex := regexp.MustCompile(`([0-9]|[a-fA-F]):([0-9]|[a-fA-F])`)
-	// Regex to protect commas inside regex quantifiers like {1,2}
-	commaGuardRegex := regexp.MustCompile(`(\{[0-9]+),([0-9]*\})`)
-	// Regex to strip script/complex pattern lines (lines starting with non-U)
-	scriptLineRegex := regexp.MustCompile(`^[^U].*(\[|=|{|\\|/.*\.js)`)
+	// 所有正则均为包级预编译变量（见文件顶部 ruleRe* 变量），
+	// 避免在逐行处理循环中重复编译。
 
 	ipNoResolve := util.IsTrue(input.Arguments["nore"])
 
@@ -167,19 +186,19 @@ func (p *Parser) parseRules(content string, input ParseInput) []ruleLine {
 		line := strings.TrimSpace(rawLine)
 
 		// Normalize line — mirrors JS preprocessing order
-		line = regexp.MustCompile(`^payload:`).ReplaceAllString(line, "")
-		line = regexp.MustCompile(`^ *(#|;|//)`).ReplaceAllString(line, "#")
-		line = regexp.MustCompile(`^ *- *`).ReplaceAllString(line, "")
-		line = commentRegex.ReplaceAllString(line, "$1")
+		line = ruleRePayload.ReplaceAllString(line, "")
+		line = ruleReCommentPrefix.ReplaceAllString(line, "#")
+		line = ruleReDashPrefix.ReplaceAllString(line, "")
+		line = ruleReInlineComment.ReplaceAllString(line, "$1")
 		// Protect commas inside {N,M} quantifiers before any comma-based split
-		line = commaGuardRegex.ReplaceAllString(line, "${1}t&zd;${2}")
+		line = ruleReCommaGuard.ReplaceAllString(line, "${1}t&zd;${2}")
 		// Drop script/complex pattern lines (matches JS regex; only affects non-U lines)
-		line = scriptLineRegex.ReplaceAllString(line, "")
+		line = ruleReScriptLine.ReplaceAllString(line, "")
 		line = strings.ReplaceAll(line, "'", "")
 		line = strings.ReplaceAll(line, `"`, "")
 
 		// Convert shorthand prefixes: consume the prefix char plus an optional leading dot
-		line = regexp.MustCompile(`^(\.|\*|\+)\.?`).ReplaceAllString(line, "DOMAIN-SUFFIX,")
+		line = ruleReShorthand.ReplaceAllString(line, "DOMAIN-SUFFIX,")
 
 		// Include (y): strip leading comment mark when keyword matches the whole line
 		if includeItems != nil {
@@ -200,13 +219,13 @@ func (p *Parser) parseRules(content string, input ParseInput) []ruleLine {
 
 		// ipNoResolve: append ,no-resolve only when nore=true and rule is ip-cidr/ip-cidr6
 		if ipNoResolve {
-			if regexp.MustCompile(`^ip6?-[ca]`).MatchString(strings.ToLower(line)) {
+			if ruleReIPRule.MatchString(strings.ToLower(line)) {
 				line = line + ",no-resolve"
 			}
 		}
 
 		// Now drop comment lines (after y may have uncommented them)
-		line = regexp.MustCompile(`^#.+`).ReplaceAllString(line, "")
+		line = ruleReDropComment.ReplaceAllString(line, "")
 
 		// Skip empty lines and section headers
 		if line == "" || strings.HasPrefix(line, "[") {
@@ -215,9 +234,9 @@ func (p *Parser) parseRules(content string, input ParseInput) []ruleLine {
 
 		// Auto-detect rule type for lines without comma separator
 		if !strings.Contains(line, ",") {
-			if cidrRegex.MatchString(line) {
+			if ruleReCIDR.MatchString(line) {
 				line = "IP-CIDR," + line
-			} else if cidr6Regex.MatchString(line) {
+			} else if ruleReCIDR6.MatchString(line) {
 				line = "IP-CIDR6," + line
 			} else {
 				line = "DOMAIN," + line
@@ -294,7 +313,7 @@ func (p *Parser) parseRuleLine(line string, input ParseInput) *ruleLine {
 	// SNI sniffing: matches the whole line, skip ip-cidr/ip-cidr6 rules
 	sni := input.Arguments["sni"]
 	if sni != "" {
-		isIPRule := regexp.MustCompile(`^ip6?-[ca]`).MatchString(strings.ToLower(line))
+		isIPRule := ruleReIPRule.MatchString(strings.ToLower(line))
 		if !isIPRule {
 			for _, item := range util.GetArgArr(sni) {
 				if strings.Contains(line, item) {
@@ -446,17 +465,17 @@ func (p *Parser) formatDomainSet(ruleSet []string, totalNum, otherNum, excludedN
 	if len(domainRules) > 0 {
 		joined := strings.Join(domainRules, "\n")
 		if !isStash {
-			re1 := regexp.MustCompile(`(?im)^DOMAIN,`)
-			re2 := regexp.MustCompile(`(?im)^DOMAIN-SUFFIX,`)
+			re1 := ruleReDomain
+			re2 := ruleReDomainSuffix
 			joined = re1.ReplaceAllString(joined, "")
 			joined = re2.ReplaceAllString(joined, ".")
 		} else {
-			re1 := regexp.MustCompile(`(?im)^  - DOMAIN,`)
-			re2 := regexp.MustCompile(`(?im)^  - DOMAIN-SUFFIX,`)
+			re1 := ruleReStashDomain
+			re2 := ruleReStashDomainSF
 			joined = re1.ReplaceAllString(joined, "")
 			joined = re2.ReplaceAllString(joined, ".")
 			// Strip policy part
-			re3 := regexp.MustCompile(`^([^,]*),?.*`)
+			re3 := ruleReStripPolicy
 			lines := strings.Split(joined, "\n")
 			for i, line := range lines {
 				lines[i] = re3.ReplaceAllString(line, "$1")
