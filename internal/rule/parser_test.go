@@ -579,3 +579,128 @@ func startBodyServer(t *testing.T, status int, body string) *httptest.Server {
 	return srv
 }
 
+
+// ─────────── formatLoonRule: logical rules dropped ───────────
+
+func TestLoon_LogicalRulesDropped(t *testing.T) {
+	// OR / AND / NOT are in the unsupported set for Loon and must return ""
+	for _, rt := range []string{"OR", "AND", "NOT"} {
+		rl := ruleLine{RuleType: rt, Value: "((DOMAIN,a.com),(DOMAIN,b.com))"}
+		if got := formatLoonRule(rl); got != "" {
+			t.Errorf("formatLoonRule(%s) = %q, want empty", rt, got)
+		}
+	}
+}
+
+// ─────────── formatLoonRule: no-resolve + policy passthrough ───────────
+
+func TestLoonRule_NoResolveAndPolicy(t *testing.T) {
+	rl := ruleLine{RuleType: "IP-CIDR", Value: "10.0.0.0/8", NoResolve: true, Policy: "REJECT"}
+	got := formatLoonRule(rl)
+	if !strings.Contains(got, "IP-CIDR,10.0.0.0/8,no-resolve,REJECT") {
+		t.Errorf("formatLoonRule no-resolve+policy wrong: %q", got)
+	}
+}
+
+// ─────────── formatStashRule: no-resolve + policy ───────────
+
+func TestStashRule_NoResolveAndPolicy(t *testing.T) {
+	rl := ruleLine{RuleType: "IP-CIDR", Value: "172.16.0.0/12", NoResolve: true, Policy: "DIRECT"}
+	got := formatStashRule(rl)
+	if !strings.Contains(got, "IP-CIDR,172.16.0.0/12,no-resolve,DIRECT") {
+		t.Errorf("formatStashRule no-resolve+policy wrong: %q", got)
+	}
+}
+
+// ─────────── Parse: remote URL fetch path ───────────
+// Covers the network-fetch branch of Parse (non-local URL) and the 200-status
+// handling, plus multi-URL concatenation.
+
+func TestParse_RemoteURLFetch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("DOMAIN,fetched.example.com"))
+	}))
+	t.Cleanup(srv.Close)
+
+	p := NewParser(config.LoadConfig())
+	out, err := p.Parse(context.Background(), ParseInput{
+		URLs:      []string{srv.URL},
+		TargetApp: "surge-rule-set",
+	})
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if !strings.Contains(out.Content, "fetched.example.com") {
+		t.Errorf("remote fetch result missing in output:\n%s", out.Content)
+	}
+}
+
+// TestParse_RemoteURL404 verifies that a 404 response is recorded in the body
+// (the parser appends "#!error=404: Not Found" to the fetched bodies, which
+// then flows through rule parsing). We assert the fetch happened and produced
+// non-empty output rather than asserting the exact directive preservation,
+// since the rule parser treats the directive line as content.
+func TestParse_RemoteURL404(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	p := NewParser(config.LoadConfig())
+	out, err := p.Parse(context.Background(), ParseInput{
+		URLs:      []string{srv.URL},
+		TargetApp: "surge-rule-set",
+	})
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	// The 404 status causes the parser to inject "#!error=404: Not Found"
+	// into the body; rule parsing then processes that text. We assert the
+	// fetch path ran (non-empty output) and the error marker text survives
+	// somewhere in the body.
+	if !strings.Contains(out.Content, "404") {
+		t.Errorf("404 response should leave a trace in output:\n%s", out.Content)
+	}
+}
+
+// TestParse_MultiURLConcatenation verifies that multiple remote URLs are
+// fetched and concatenated (with localtext appended).
+func TestParse_MultiURLConcatenation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("DOMAIN," + r.URL.Path[1:]))
+	}))
+	t.Cleanup(srv.Close)
+
+	p := NewParser(config.LoadConfig())
+	out, err := p.Parse(context.Background(), ParseInput{
+		URLs:      []string{srv.URL + "/first", srv.URL + "/second"},
+		TargetApp: "surge-rule-set",
+		Arguments: map[string]string{"localtext": "DOMAIN,local.example.com"},
+	})
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if !strings.Contains(out.Content, "first") || !strings.Contains(out.Content, "second") {
+		t.Errorf("both remote bodies should be present:\n%s", out.Content)
+	}
+	if !strings.Contains(out.Content, "local.example.com") {
+		t.Errorf("localtext should be appended:\n%s", out.Content)
+	}
+}
+
+// TestParse_EmptyInputReturnsEmpty verifies the empty-body early return.
+func TestParse_EmptyInputReturnsEmpty(t *testing.T) {
+	p := NewParser(config.LoadConfig())
+	out, err := p.Parse(context.Background(), ParseInput{
+		URLs:      []string{},
+		TargetApp: "surge-rule-set",
+	})
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if out.Content != "" {
+		t.Errorf("empty input should yield empty content, got: %q", out.Content)
+	}
+}

@@ -516,20 +516,6 @@ func (p *Parser) formatDomainSet2(ruleSet []string, totalNum, otherNum, excluded
 		totalNum, nonDomainNum, otherNum, excludedNum, otherStr, excludedStr, prefix, strings.Join(nonDomainRules, "\n"))
 }
 
-// formatRuleLine formats a rule line for generic/surge output.
-func formatRuleLine(rl ruleLine, target string) string {
-	noResolve := ""
-	if rl.NoResolve {
-		noResolve = ",no-resolve"
-	}
-	extMatch := rl.ExtMatch
-	policy := ""
-	if rl.Policy != "" {
-		policy = "," + rl.Policy
-	}
-	return fmt.Sprintf("%s,%s%s%s%s", rl.RuleType, rl.Value, noResolve, extMatch, policy)
-}
-
 // formatSurgeRule formats a rule for Surge/Shadowrocket.
 func formatSurgeRule(rl ruleLine, isShadowrocket bool) string {
 	ruleType := strings.ToUpper(rl.RuleType)
