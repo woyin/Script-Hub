@@ -1802,9 +1802,16 @@ func cleanRegexEscapes(s string) string {
 	return s
 }
 
+// Per-line / one-shot regexes hoisted to package level.
+var (
+	sanitizeNameRe  = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+	surgeSectionRe  = regexp.MustCompile(`^\[(.+)\]`)
+	extractHostRe   = regexp.MustCompile(`\\?://([a-zA-Z0-9_\\.-]+)`)
+)
+
 // sanitizeName creates a valid script name from a URL pattern.
 func sanitizeName(pattern string) string {
-	s := regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(pattern, "_")
+	s := sanitizeNameRe.ReplaceAllString(pattern, "_")
 	s = strings.Trim(s, "_")
 	if len(s) > 40 {
 		s = s[:40]
@@ -1820,11 +1827,10 @@ func parseSurgeSections(content string) map[string][]string {
 	sections := make(map[string][]string)
 	var currentSection string
 	lines := strings.Split(content, "\n")
-	sectionRegex := regexp.MustCompile(`^\[(.+)\]`)
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if matches := sectionRegex.FindStringSubmatch(line); len(matches) > 1 {
+		if matches := surgeSectionRe.FindStringSubmatch(line); len(matches) > 1 {
 			currentSection = matches[1]
 			continue
 		}
@@ -1863,9 +1869,7 @@ func parseMITMSection(lines []string) []string {
 // The hostname includes dots (possibly escaped as \.) up to the first / or regex metacharacter.
 func extractHostnames(pattern string) []string {
 	var hosts []string
-	// Match :// followed by the hostname (allowing \. and alphanumeric/hyphen)
-	re := regexp.MustCompile(`\\?://([a-zA-Z0-9_\\.-]+)`)
-	matches := re.FindStringSubmatch(pattern)
+	matches := extractHostRe.FindStringSubmatch(pattern)
 	if len(matches) > 1 {
 		host := matches[1]
 		host = strings.ReplaceAll(host, `\.`, ".")

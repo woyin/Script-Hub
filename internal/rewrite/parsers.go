@@ -18,6 +18,26 @@ import (
 
 const scriptHubRawURL = "https://raw.githubusercontent.com/Script-Hub-Org/Script-Hub/main"
 
+// Per-line / per-loop regexes hoisted to package level to avoid recompiling
+// on every call. Names mirror the JS variable purpose from Rewrite-Parser.js.
+var (
+	mockKVRe    = regexp.MustCompile(`\s+(?:data-type|status-code|header|data|data-path|mock-data-is-base64)\s*=`)
+	mockKVReEq  = regexp.MustCompile(`\s+(?:data-type|status-code|header|data|data-path|mock-data-is-base64)=`)
+	jsonPathRe  = regexp.MustCompile(`\.?([^\.\[\]]+)|\["([^"]*)"\]|\['([^']*)'\]|\[(\d+)\]`)
+	bodyRewLine = regexp.MustCompile(`^((?:http-request|http-response)(?:-jq)?)\s+?(.*?)\s+?(.*?)$`)
+	argTypeRe   = regexp.MustCompile(`=\s*(input|select|switch)\s*,`)
+	colonArgRe  = regexp.MustCompile(`([^:,]+):(\s*".+?"|[^,]*)`)
+	boolRe      = regexp.MustCompile(`^(true|false)$`)
+	commaArgRe  = regexp.MustCompile(`(^.*?)\s*=\s*(.*?)\s*,(.*?),\s*([^,]*\s*=.+)`)
+	panelSnRe   = regexp.MustCompile(`[=,]\s*script-name\s*=`)
+	hostLineRe  = regexp.MustCompile(`^#?(?:\*|localhost|[-*?0-9a-z]+\.[-*.?0-9a-z]+)\s*=\s*(?:(?:server|script)\s*:\s*)?[\s0-9a-z:/,.]+$`)
+	skipProxyRe = regexp.MustCompile(`^skip-proxy\s*=\s*(.+)`)
+	realIPRe    = regexp.MustCompile(`^(?:always-)?real-ip\s*=\s*(.+)`)
+	qxCronRe    = regexp.MustCompile(`^[\d*/]+(\s+[\d*/]+){4}$`)
+	qxURLRe     = regexp.MustCompile(`(https?|ftp|file)://`)
+	qxTagRe     = regexp.MustCompile(`[,\s]\s*tag\s*=\s*([^\s,]+)`)
+)
+
 // applyPinPout applies Pin (y, include/uncomment) and Pout (x, exclude) filters
 // to raw input lines, mirroring Rewrite-Parser.js Pin0/Pout0 behavior:
 //   - y: any keyword matching the line strips a leading comment marker so the
@@ -89,8 +109,7 @@ func isMetaExtraLine(line string) bool {
 //   - "url echo-response CT URL"
 //   - lines containing data="..." or data-type= (Surge Map Local / Loon mock-response-body)
 func parseMockLine(line string) *ParsedRewrite {
-	mockRe := regexp.MustCompile(`\s+(?:data-type|status-code|header|data|data-path|mock-data-is-base64)\s*=`)
-	if strings.Contains(line, " echo-response ") || mockRe.MatchString(line) {
+	if strings.Contains(line, " echo-response ") || mockKVRe.MatchString(line) {
 		rw := &ParsedRewrite{}
 		fields := strings.Fields(line)
 		if len(fields) > 0 {
@@ -156,7 +175,7 @@ func mockField(line, key string) string {
 	rest := strings.TrimLeft(line[idx+len(key):], " ")
 	// value ends at the next " key=" pattern or end
 	end := len(rest)
-	if m := regexp.MustCompile(`\s+(?:data-type|status-code|header|data|data-path|mock-data-is-base64)=`).FindStringIndex(rest); m != nil {
+	if m := mockKVReEq.FindStringIndex(rest); m != nil {
 		end = m[0]
 	}
 	return strings.Trim(strings.TrimSpace(rest[:end]), `"`)
@@ -204,9 +223,8 @@ func loonMockContentType(dt string) string {
 // for single and double quotes.
 func parseJsonPath(path string) string {
 	path = strings.TrimSpace(path)
-	re := regexp.MustCompile(`\.?([^\.\[\]]+)|\["([^"]*)"\]|\['([^']*)'\]|\[(\d+)\]`)
 	var parts []string
-	for _, m := range re.FindAllStringSubmatch(path, -1) {
+	for _, m := range jsonPathRe.FindAllStringSubmatch(path, -1) {
 		switch {
 		case m[1] != "":
 			parts = append(parts, jsonString(m[1]))
@@ -230,13 +248,12 @@ func jsonString(s string) string {
 // parseBodyRewriteSection parses a Surge [Body Rewrite] section into entries.
 func parseBodyRewriteSection(lines []string) []BodyRewriteEntry {
 	var entries []BodyRewriteEntry
-	lineRe := regexp.MustCompile(`^((?:http-request|http-response)(?:-jq)?)\s+?(.*?)\s+?(.*?)$`)
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
 			continue
 		}
-		m := lineRe.FindStringSubmatch(line)
+		m := bodyRewLine.FindStringSubmatch(line)
 		if len(m) == 4 {
 			entries = append(entries, BodyRewriteEntry{Type: m[1], Regex: m[2], Value: m[3]})
 		}
@@ -339,7 +356,7 @@ func parseArgumentsLine(line string) []SgArgument {
 	}
 	// Non-#! line form: key = type,value,tag=...
 	if !strings.HasPrefix(trimmed, "#") && strings.Contains(trimmed, "=") {
-		if regexp.MustCompile(`=\s*(input|select|switch)\s*,`).MatchString(trimmed) {
+		if argTypeRe.MatchString(trimmed) {
 			return parseCommaArgument(trimmed)
 		}
 	}
@@ -348,14 +365,13 @@ func parseArgumentsLine(line string) []SgArgument {
 
 func parseColonArguments(s string) []SgArgument {
 	var args []SgArgument
-	re := regexp.MustCompile(`([^:,]+):(\s*".+?"|[^,]*)`)
-	for _, m := range re.FindAllStringSubmatch(s, -1) {
+	for _, m := range colonArgRe.FindAllStringSubmatch(s, -1) {
 		key := strings.TrimSpace(m[1])
 		val := strings.TrimSpace(m[2])
 		key = strings.Trim(key, `"`)
 		val = strings.Trim(val, `"`)
 		typ := "input"
-		if regexp.MustCompile(`^(true|false)$`).MatchString(val) {
+		if boolRe.MatchString(val) {
 			typ = "switch"
 		}
 		args = append(args, SgArgument{Key: key, Value: val, Type: typ, Tag: "tag=" + key + ", desc=" + key})
@@ -364,8 +380,7 @@ func parseColonArguments(s string) []SgArgument {
 }
 
 func parseCommaArgument(s string) []SgArgument {
-	re := regexp.MustCompile(`(^.*?)\s*=\s*(.*?)\s*,(.*?),\s*([^,]*\s*=.+)`)
-	m := re.FindStringSubmatch(s)
+	m := commaArgRe.FindStringSubmatch(s)
 	if len(m) < 5 {
 		return nil
 	}
@@ -392,7 +407,7 @@ func parsePanelLine(line string) *PanelInfo {
 		}
 	}
 
-	if !regexp.MustCompile(`[=,]\s*script-name\s*=`).MatchString(line) {
+	if !panelSnRe.MatchString(line) {
 		return nil
 	}
 	name := strings.TrimSpace(strings.SplitN(line, "=", 2)[0])
@@ -412,8 +427,7 @@ func parsePanelLine(line string) *PanelInfo {
 // parseHostLine parses a Surge [Host] line: domain = value.
 // JS trigger: /^#?(?:\*|localhost|[-*?0-9a-z]+\.[-*.?0-9a-z]+)\s*=\s*(?:server\s*:\s*|script\s*:\s*)?[\s0-9a-z:/,.]+$/
 func parseHostLine(line string) *HostInfo {
-	hostRe := regexp.MustCompile(`^#?(?:\*|localhost|[-*?0-9a-z]+\.[-*.?0-9a-z]+)\s*=\s*(?:(?:server|script)\s*:\s*)?[\s0-9a-z:/,.]+$`)
-	if !hostRe.MatchString(line) {
+	if !hostLineRe.MatchString(line) {
 		return nil
 	}
 	parts := strings.SplitN(line, "=", 2)
@@ -884,9 +898,9 @@ func (p *Parser) parseSurgeModule(content string, args map[string]string) []Pars
 	// These are collected into ParsedModule.SkipProxy / RealIP for [General] output
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if m := regexp.MustCompile(`^skip-proxy\s*=\s*(.+)`).FindStringSubmatch(line); len(m) == 2 {
+		if m := skipProxyRe.FindStringSubmatch(line); len(m) == 2 {
 			module.SkipProxy = append(module.SkipProxy, parseHostnamesFromValue(m[1])...)
-		} else if m := regexp.MustCompile(`^(?:always-)?real-ip\s*=\s*(.+)`).FindStringSubmatch(line); len(m) == 2 {
+		} else if m := realIPRe.FindStringSubmatch(line); len(m) == 2 {
 			module.RealIP = append(module.RealIP, parseHostnamesFromValue(m[1])...)
 		}
 	}
@@ -1336,8 +1350,7 @@ func isQXCronLine(line string) bool {
 	}
 	// First 5 parts should be cron fields (digits, *, /)
 	cronPart := strings.Join(parts[:5], " ")
-	cronRe := regexp.MustCompile(`^[\d*/]+(\s+[\d*/]+){4}$`)
-	return cronRe.MatchString(cronPart)
+	return qxCronRe.MatchString(cronPart)
 }
 
 // parseQXCronLine parses a QX cron line into a ParsedRewrite with type=cron.
@@ -1346,8 +1359,7 @@ func parseQXCronLine(line string) *ParsedRewrite {
 	line = strings.TrimLeft(line, "#;")
 
 	// Split into cron expression and URL
-	urlRe := regexp.MustCompile(`(https?|ftp|file)://`)
-	loc := urlRe.FindStringIndex(line)
+	loc := qxURLRe.FindStringIndex(line)
 	if loc == nil {
 		return nil
 	}
@@ -1357,8 +1369,7 @@ func parseQXCronLine(line string) *ParsedRewrite {
 
 	// Extract tag from URL part
 	var scriptName string
-	tagRe := regexp.MustCompile(`[,\s]\s*tag\s*=\s*([^\s,]+)`)
-	if m := tagRe.FindStringSubmatch(urlPart); len(m) >= 2 {
+	if m := qxTagRe.FindStringSubmatch(urlPart); len(m) >= 2 {
 		scriptName = m[1]
 	}
 	// Clean URL: remove tag and other params after the URL
