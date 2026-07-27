@@ -1,3 +1,9 @@
+// Input: net/url, strings
+// Output: func IsTrue(), func GetArgArr(), func ParseQueryString(), func ParseQueryStringLenient()
+// Pos: 工具层-共享工具函数，提供布尔判断、参数拆分与查询字符串解析
+//
+// 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
+
 // Package util 提供Script Hub各个模块共享的工具函数。
 // 这些函数从重复的包内实现中提取而来，统一维护以确保行为一致。
 package util

@@ -1,3 +1,9 @@
+// Input: context, log, regexp, strings, internal/config, internal/httpclient, internal/types
+// Output: type ParseInput, type ParseOutput, type Parser, 众多解析类型（ParsedRewrite/ParsedModule 等）, func NewParser(), func (Parser) Parse()
+// Pos: 业务层-重写解析核心，抓取远程内容并按来源格式解析为统一中间表示
+//
+// 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
+
 // Package rewrite 实现重写规则解析与转换引擎。
 // 将 QX 重写、Surge 模块、Loon 插件等格式解析为统一的中间表示，
 // 再转换为目标平台格式。对应 JS 版 Rewrite-Parser.js 的完整功能。

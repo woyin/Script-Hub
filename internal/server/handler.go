@@ -1,3 +1,9 @@
+// Input: fmt, log, net/http, net/url, strings, internal/frontend, internal/rewrite, internal/rule, internal/types, internal/util
+// Output: func (Server) scriptHubHandler/rewriteParserHandler/ruleParserHandler(), func writeResponse(), func decodeReqArr(), func inferTargetFromUA(), func baseURLFromRequest()
+// Pos: API层-请求处理器，调用各解析器并统一写回 HTTP 响应
+//
+// 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
+
 // handler.go 实现 Script Hub HTTP 请求处理器。
 // 每个处理器对应 JS 版 scriptMap.js 中的一条路由规则：
 //   - scriptHubHandler    → script-hub.js（前端 UI）
@@ -142,7 +148,11 @@ func inferTargetFromUA(r *http.Request) string {
 		return ""
 	}
 	switch {
-	case strings.Contains(ua, "Surge"), strings.Contains(ua, "LanceX"), strings.Contains(ua, "Egern"):
+	case strings.Contains(ua, "Egern"):
+		return "egern-rule-set"
+	case strings.Contains(ua, "LanceX"):
+		return "lancex-rule-set"
+	case strings.Contains(ua, "Surge"):
 		return "surge-rule-set"
 	case strings.Contains(ua, "Stash"):
 		return "stash-rule-set"

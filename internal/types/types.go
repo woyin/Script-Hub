@@ -1,3 +1,9 @@
+// Input: （无外部依赖，纯类型定义）
+// Output: type ResponseData, type ResponseWriter, ResponseWriter.GetResponse()
+// Pos: 数据层-共享类型，定义所有解析器/转换器的统一响应结构
+//
+// 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
+
 // Package types 定义了 Script Hub 各模块间共享的数据类型。
 // 所有解析器/转换器的输出都通过 ResponseWriter 接口统一到 HTTP 响应。
 package types

@@ -1,3 +1,9 @@
+// Input: os, strconv
+// Output: type Platform, type Config, func LoadConfig(), 平台/目标格式常量
+// Pos: 配置层-全局配置，从环境变量加载运行时参数并定义平台与格式常量
+//
+// 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
+
 // Package config 提供 Script Hub 的全局配置加载。
 // 所有配置项均通过环境变量读取，与 JS 版 service.js / preview.js 的环境变量一一对应。
 package config
@@ -26,10 +32,15 @@ const (
 	TargetStashStoverride     = "stash-stoverride"      // Stash 覆写 (.stoverride)
 	TargetLoonPlugin          = "loon-plugin"           // Loon 插件 (.plugin)
 	TargetShadowrocketModule  = "shadowrocket-module"   // Shadowrocket 模块 (.sgmodule)
+	TargetEgernModule         = "egern-module"          // Egern 模块（Surge 兼容）
+	TargetLanceXModule        = "lancex-module"         // LanceX 模块（Surge 兼容）
+	TargetQXRewrite           = "qx-rewrite"            // Quantumult X 重写配置
 	TargetSurgeRuleSet        = "surge-rule-set"        // Surge 规则集
 	TargetStashRuleSet        = "stash-rule-set"        // Stash 规则集
 	TargetLoonRuleSet         = "loon-rule-set"         // Loon 规则集
 	TargetShadowrocketRuleSet = "shadowrocket-rule-set" // Shadowrocket 规则集
+	TargetEgernRuleSet        = "egern-rule-set"        // Egern 规则集（Surge 兼容）
+	TargetLanceXRuleSet       = "lancex-rule-set"       // LanceX 规则集（Surge 兼容）
 	TargetSurgeDomainSet      = "surge-domain-set"      // Surge 域名集
 	TargetSurgeDomainSet2     = "surge-domain-set2"     // 无法转换为域名集的剩余规则集
 	TargetStashDomainSet      = "stash-domain-set"      // Stash 域名集

@@ -1,3 +1,9 @@
+// Input: fmt, net/url, regexp, strings, internal/util
+// Output: func (Parser) convertModules(), Surge/Loon/Stash/Generic 各格式转换与格式化函数, 工具函数（uniqueStrings/filterCommented 等）
+// Pos: 业务层-重写格式转换，将统一中间表示转换为目标平台输出格式
+//
+// 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
+
 package rewrite
 
 import (
@@ -21,7 +27,16 @@ type surgeOutput struct {
 	ForceHTTPHosts     []string
 	Panels             []string
 	Hosts              []string
-	Name               string
+	HostEntries        []HostInfo // raw host entries for target-specific routing
+	// Stash-specific output buffers (populated only by classifyStashScript).
+	// These hold pre-formatted YAML entries so formatStashOutput does not need
+	// to re-parse Surge-style [Script] lines.
+	StashScripts   []string // http-request/response YAML entries
+	StashCron      []string // cron YAML entries
+	StashTiles     []string // generic/tile YAML entries
+	StashProviders []string // script-provider YAML entries
+	stashNameIdx map[string]int  // per-name counter for _<num> suffixes (Stash)
+	Name           string
 	Desc               string
 	Icon               string
 	CategoryKey        string
@@ -40,8 +55,12 @@ func (p *Parser) convertModules(modules []ParsedModule, targetApp string, args m
 	target := strings.ToLower(targetApp)
 
 	switch {
-	case strings.Contains(target, "surge") || strings.Contains(target, "shadowrocket"):
+	// Egern / LanceX are Surge-compatible clients and share the Surge output path.
+	case strings.Contains(target, "surge") || strings.Contains(target, "shadowrocket") ||
+		strings.Contains(target, "egern") || strings.Contains(target, "lancex"):
 		return p.convertToSurgeFormat(modules, target, args)
+	case strings.Contains(target, "qx"):
+		return p.convertToQXFormat(modules, target, args)
 	case strings.Contains(target, "loon"):
 		return p.convertToLoonFormat(modules, target, args)
 	case strings.Contains(target, "stash"):
@@ -76,10 +95,10 @@ func (p *Parser) convertToSurgeFormat(modules []ParsedModule, target string, arg
 		out.Rules = append(out.Rules, mod.Rules...)
 
 		for _, rw := range mod.Rewrites {
-			p.classifySurgeRewrite(rw, &out, args)
+			p.classifySurgeRewrite(rw, &out, target, args)
 		}
 		for _, rw := range mod.Scripts {
-			p.classifySurgeScript(rw, &out, args)
+			p.classifySurgeScript(rw, &out, target, args)
 		}
 		// Panels (Surge only)
 		for _, panel := range mod.Panels {
@@ -88,6 +107,7 @@ func (p *Parser) convertToSurgeFormat(modules []ParsedModule, target string, arg
 		// Hosts
 		for _, host := range mod.Hosts {
 			out.Hosts = append(out.Hosts, fmt.Sprintf("%s = %s", host.Domain, host.Value))
+			out.HostEntries = append(out.HostEntries, host)
 		}
 	}
 
@@ -111,7 +131,14 @@ func (p *Parser) convertToSurgeFormat(modules []ParsedModule, target string, arg
 // QX header/body rewrites are already converted to script entries by the parser,
 // so they won't appear here from QX input. This handles: reject, URL rewrite,
 // echo-response, native Header Rewrite pass-through, and Map Local pass-through.
-func (p *Parser) classifySurgeRewrite(rw ParsedRewrite, out *surgeOutput, args map[string]string) {
+// `target` distinguishes Surge-strict (surge/egern/lancex: Map Local only for
+// suffix-rejects) from Shadowrocket (URL Rewrite with video->img, tinygif kept)
+// and Stash (no Map Local; URL Rewrite with -video|-tinygif -> -img). Mirrors
+// upstream Rewrite-Parser.js lines 1268-1320.
+func (p *Parser) classifySurgeRewrite(rw ParsedRewrite, out *surgeOutput, target string, args map[string]string) {
+	isShadowrocket := strings.Contains(target, "shadowrocket")
+	isStash := strings.Contains(target, "stash")
+	isSurgeStrict := !isShadowrocket && !isStash // surge / egern / lancex
 	switch rw.Type {
 	case RewriteTypeEchoResponse:
 		scriptURL := scriptHubRawBase + "/scripts/echo-response.js"
@@ -125,39 +152,60 @@ func (p *Parser) classifySurgeRewrite(rw ParsedRewrite, out *surgeOutput, args m
 	case RewriteTypeReject, RewriteTypeRejectDict, RewriteTypeRejectImg,
 		RewriteTypeRejectTinyGif, RewriteTypeReject200, RewriteTypeRejectArray,
 		RewriteTypeRejectVideo, RewriteTypeRejectDrop:
-		rejectType := "reject"
+		// Upstream Rewrite-Parser.js URL Rewrite reject handling (lines 1268-1320):
+		//   - Shadowrocket: emit URL Rewrite line; reject-video -> reject-img (1271);
+		//     reject-tinygif kept (1273); others kept as-is.
+		//   - Stash: emit URL Rewrite line with -video|-tinygif -> -img (1305).
+		//   - Surge-strict (surge/egern/lancex): only plain reject emits a URL Rewrite
+		//     line (rwtype matches /(?:reject|302|307|header)$/); suffix-rejects go to
+		//     [Map Local] only (lines 1312-1320).
 		switch rw.Type {
-		case RewriteTypeRejectDict:
-			rejectType = "reject-dict"
-		case RewriteTypeReject200:
-			rejectType = "reject-200"
-		case RewriteTypeRejectImg:
-			rejectType = "reject-img"
-		case RewriteTypeRejectTinyGif:
-			rejectType = "reject-tinygif"
-		case RewriteTypeRejectArray:
-			rejectType = "reject-array"
 		case RewriteTypeRejectVideo:
-			// JS maps reject-video to reject-tinygif on Surge/Shadowrocket
-			rejectType = "reject-tinygif"
-		case RewriteTypeRejectDrop:
-			rejectType = "reject-drop"
-		}
-		out.URLRewrites = append(out.URLRewrites, fmt.Sprintf("%s %s", rw.Pattern, rejectType))
-		// Surge also emits Map Local entries for dict/array/200/img/tinygif/video
-		switch rw.Type {
+			if isSurgeStrict {
+				out.MapLocal = append(out.MapLocal,
+					fmt.Sprintf(`%s data-type=tiny-gif status-code=200`, rw.Pattern))
+			} else {
+				out.URLRewrites = append(out.URLRewrites, fmt.Sprintf("%s reject-img", rw.Pattern))
+			}
 		case RewriteTypeRejectDict:
-			out.MapLocal = append(out.MapLocal,
-				fmt.Sprintf(`%s data-type=text data="{}" status-code=200 header="Content-Type:application/json"`, rw.Pattern))
+			if isSurgeStrict {
+				out.MapLocal = append(out.MapLocal,
+					fmt.Sprintf(`%s data-type=text data="{}" status-code=200 header="Content-Type:application/json"`, rw.Pattern))
+			} else {
+				out.URLRewrites = append(out.URLRewrites, fmt.Sprintf("%s reject-dict", rw.Pattern))
+			}
 		case RewriteTypeRejectArray:
-			out.MapLocal = append(out.MapLocal,
-				fmt.Sprintf(`%s data-type=text data="[]" status-code=200`, rw.Pattern))
+			if isSurgeStrict {
+				out.MapLocal = append(out.MapLocal,
+					fmt.Sprintf(`%s data-type=text data="[]" status-code=200`, rw.Pattern))
+			} else {
+				out.URLRewrites = append(out.URLRewrites, fmt.Sprintf("%s reject-array", rw.Pattern))
+			}
 		case RewriteTypeReject200:
-			out.MapLocal = append(out.MapLocal,
-				fmt.Sprintf(`%s data-type=text data=" " status-code=200`, rw.Pattern))
-		case RewriteTypeRejectImg, RewriteTypeRejectTinyGif, RewriteTypeRejectVideo:
-			out.MapLocal = append(out.MapLocal,
-				fmt.Sprintf(`%s data-type=tiny-gif status-code=200`, rw.Pattern))
+			if isSurgeStrict {
+				out.MapLocal = append(out.MapLocal,
+					fmt.Sprintf(`%s data-type=text data=" " status-code=200`, rw.Pattern))
+			} else {
+				out.URLRewrites = append(out.URLRewrites, fmt.Sprintf("%s reject-200", rw.Pattern))
+			}
+		case RewriteTypeRejectImg:
+			if isSurgeStrict {
+				out.MapLocal = append(out.MapLocal,
+					fmt.Sprintf(`%s data-type=tiny-gif status-code=200`, rw.Pattern))
+			} else {
+				out.URLRewrites = append(out.URLRewrites, fmt.Sprintf("%s reject-img", rw.Pattern))
+			}
+		case RewriteTypeRejectTinyGif:
+			if isSurgeStrict {
+				out.MapLocal = append(out.MapLocal,
+					fmt.Sprintf(`%s data-type=tiny-gif status-code=200`, rw.Pattern))
+			} else if isStash {
+				out.URLRewrites = append(out.URLRewrites, fmt.Sprintf("%s reject-img", rw.Pattern))
+			} else {
+				out.URLRewrites = append(out.URLRewrites, fmt.Sprintf("%s reject-tinygif", rw.Pattern))
+			}
+		case RewriteTypeReject, RewriteTypeRejectDrop:
+			out.URLRewrites = append(out.URLRewrites, fmt.Sprintf("%s reject", rw.Pattern))
 		}
 
 	case RewriteTypeURLRewrite:
@@ -295,8 +343,16 @@ func formatSurgePanel(p PanelInfo) string {
 	return p.Name + " = " + strings.Join(parts, ", ")
 }
 
-// classifySurgeScript classifies a script entry into the Surge [Script] section.
-func (p *Parser) classifySurgeScript(rw ParsedRewrite, out *surgeOutput, args map[string]string) {
+// classifySurgeScript classifies a script entry into the Surge-compatible
+// [Script] section. Field order and conditional fields follow upstream
+// Rewrite-Parser.js (Surge/Shadowrocket branches, lines 1524-1602).
+//
+// Notes:
+//   - engine= is Surge-only (NOT Shadowrocket); Egern/LanceX are treated as
+//     Surge-compatible and keep engine.
+//   - img-url= is never emitted in Surge/Shadowrocket [Script] (only Loon/Stash).
+//   - generic and event/cron/dns/rule each have distinct field sets.
+func (p *Parser) classifySurgeScript(rw ParsedRewrite, out *surgeOutput, target string, args map[string]string) {
 	timeout := rw.Timeout
 	if timeout == 0 {
 		timeout = 30
@@ -314,68 +370,233 @@ func (p *Parser) classifySurgeScript(rw ParsedRewrite, out *surgeOutput, args ma
 		scriptName = rw.Tag
 	}
 
-	// Cron scripts use a different Surge output format
-	if rw.ScriptType == "cron" {
+	// engine= only on Surge (and Surge-compat Egern/LanceX); NOT Shadowrocket.
+	includeEngine := rw.Engine != "" && target != "shadowrocket"
+
+	// Helper to append argument respecting upstream quoting: if the argument
+	// contains a comma and is not already quoted, wrap it in double quotes.
+	appendArg := func(parts []string) []string {
+		if rw.Arguments == "" {
+			return parts
+		}
+		if strings.Contains(rw.Arguments, ",") && !(strings.HasPrefix(rw.Arguments, `"`) && strings.HasSuffix(rw.Arguments, `"`)) {
+			return append(parts, fmt.Sprintf(`argument="%s"`, rw.Arguments))
+		}
+		return append(parts, fmt.Sprintf("argument=%s", rw.Arguments))
+	}
+
+	switch rw.ScriptType {
+	case "cron":
 		cronexp := rw.CronExp
 		if cronexp == "" {
 			cronexp = "0 0 * * *"
 		}
+		// Order per upstream: type, cronexp, script-path, script-update-interval, engine, timeout, wake-system, argument
 		var parts []string
 		parts = append(parts, "type=cron")
 		parts = append(parts, fmt.Sprintf("cronexp=%s", cronexp))
 		parts = append(parts, fmt.Sprintf("script-path=%s", rw.ScriptPath))
-		parts = append(parts, fmt.Sprintf("timeout=%d", timeout))
-		if rw.Arguments != "" {
-			parts = append(parts, fmt.Sprintf("argument=%s", rw.Arguments))
+		if rw.ScriptUpdateInterval != "" {
+			parts = append(parts, fmt.Sprintf("script-update-interval=%s", rw.ScriptUpdateInterval))
 		}
+		if includeEngine {
+			parts = append(parts, fmt.Sprintf("engine=%s", rw.Engine))
+		}
+		parts = append(parts, fmt.Sprintf("timeout=%d", timeout))
 		if rw.WakeSystem {
 			parts = append(parts, "wake-system=true")
 		}
-		if rw.Engine != "" {
+		parts = appendArg(parts)
+		out.Scripts = append(out.Scripts, scriptName+" = "+strings.Join(parts, ", "))
+
+	case "event":
+		// Order per upstream: type, event-name, script-path, ability, engine, script-update-interval, timeout, argument
+		eventName := rw.EventName
+		if eventName == "" {
+			eventName = "network-changed"
+		}
+		var parts []string
+		parts = append(parts, "type=event")
+		parts = append(parts, fmt.Sprintf("event-name=%s", eventName))
+		parts = append(parts, fmt.Sprintf("script-path=%s", rw.ScriptPath))
+		if rw.Ability != "" {
+			parts = append(parts, fmt.Sprintf("ability=%s", rw.Ability))
+		}
+		if includeEngine {
 			parts = append(parts, fmt.Sprintf("engine=%s", rw.Engine))
 		}
 		if rw.ScriptUpdateInterval != "" {
 			parts = append(parts, fmt.Sprintf("script-update-interval=%s", rw.ScriptUpdateInterval))
 		}
+		parts = append(parts, fmt.Sprintf("timeout=%d", timeout))
+		parts = appendArg(parts)
 		out.Scripts = append(out.Scripts, scriptName+" = "+strings.Join(parts, ", "))
+
+	case "dns", "rule":
+		// Order per upstream: type, script-path, script-update-interval, engine, timeout, argument
+		var parts []string
+		parts = append(parts, fmt.Sprintf("type=%s", rw.ScriptType))
+		parts = append(parts, fmt.Sprintf("script-path=%s", rw.ScriptPath))
+		if rw.ScriptUpdateInterval != "" {
+			parts = append(parts, fmt.Sprintf("script-update-interval=%s", rw.ScriptUpdateInterval))
+		}
+		if includeEngine {
+			parts = append(parts, fmt.Sprintf("engine=%s", rw.Engine))
+		}
+		parts = append(parts, fmt.Sprintf("timeout=%d", timeout))
+		parts = appendArg(parts)
+		out.Scripts = append(out.Scripts, scriptName+" = "+strings.Join(parts, ", "))
+
+	case "generic":
+		// Upstream pushes generic scripts as-is to otherRule (line 1571-1572);
+		// they are not normal [Script] entries on Surge/Shadowrocket. Emit nothing
+		// here so they are not mis-rendered. (Stash handles generic as tiles.)
 		return
+
+	default:
+		// http-request / http-response (and any other pattern-based type).
+		// Order per upstream: type, pattern, script-path, requires-body,
+		// binary-body-mode, engine, max-size, ability, script-update-interval,
+		// timeout, argument
+		var parts []string
+		parts = append(parts, fmt.Sprintf("type=%s", rw.ScriptType))
+		if rw.Pattern != "" {
+			parts = append(parts, fmt.Sprintf("pattern=%s", rw.Pattern))
+		}
+		parts = append(parts, fmt.Sprintf("script-path=%s", rw.ScriptPath))
+		parts = append(parts, fmt.Sprintf("requires-body=%d", requiresBody))
+		if rw.BinaryBody {
+			parts = append(parts, "binary-body-mode=true")
+		}
+		if includeEngine {
+			parts = append(parts, fmt.Sprintf("engine=%s", rw.Engine))
+		}
+		if rw.MaxSize != "" {
+			parts = append(parts, fmt.Sprintf("max-size=%s", rw.MaxSize))
+		}
+		if rw.Ability != "" {
+			parts = append(parts, fmt.Sprintf("ability=%s", rw.Ability))
+		}
+		if rw.ScriptUpdateInterval != "" {
+			parts = append(parts, fmt.Sprintf("script-update-interval=%s", rw.ScriptUpdateInterval))
+		}
+		parts = append(parts, fmt.Sprintf("timeout=%d", timeout))
+		parts = appendArg(parts)
+		out.Scripts = append(out.Scripts, scriptName+" = "+strings.Join(parts, ", "))
+	}
+}
+
+// classifyStashScript builds Stash-native YAML entries directly from the
+// parsed rewrite, matching upstream Rewrite-Parser.js (Stash branch, lines
+// 1646-1745). Stash uses its own field names (match, name, type, require-body,
+// max-size, binary-mode, timeout, argument) and structure, so we do NOT reuse
+// classifySurgeScript's Surge-style line output.
+//
+// Per upstream:
+//   - http-request/http-response -> http.script entry + script-provider
+//   - cron                       -> cron.script entry + script-provider
+//   - generic                    -> tiles entry + script-provider (unless raw)
+//   - event/network-changed/rule/dns -> pushed to otherRule (passthrough); we
+//     emit nothing here (no native Stash representation in this IR).
+//   - script names get a "_<num>" suffix and are deduplicated by URL.
+func (p *Parser) classifyStashScript(rw ParsedRewrite, out *surgeOutput, args map[string]string) {
+	timeout := rw.Timeout
+	if timeout == 0 {
+		timeout = 30
 	}
 
-	// Standard script format
-	var parts []string
-	parts = append(parts, fmt.Sprintf("type=%s", rw.ScriptType))
-	if rw.Pattern != "" {
-		parts = append(parts, fmt.Sprintf("pattern=%s", rw.Pattern))
+	scriptName := rw.Replacement
+	if scriptName == "" {
+		scriptName = sanitizeName(rw.Pattern)
 	}
-	parts = append(parts, fmt.Sprintf("script-path=%s", rw.ScriptPath))
-	parts = append(parts, fmt.Sprintf("requires-body=%d", requiresBody))
-	if rw.MaxSize != "" {
-		parts = append(parts, fmt.Sprintf("max-size=%s", rw.MaxSize))
-	}
-	if rw.ScriptUpdateInterval != "" {
-		parts = append(parts, fmt.Sprintf("script-update-interval=%s", rw.ScriptUpdateInterval))
-	}
-	parts = append(parts, fmt.Sprintf("timeout=%d", timeout))
-	if rw.Arguments != "" {
-		parts = append(parts, fmt.Sprintf("argument=%s", rw.Arguments))
-	}
-	if rw.EventName != "" {
-		parts = append(parts, fmt.Sprintf("event-name=%s", rw.EventName))
-	}
-	if rw.BinaryBody {
-		parts = append(parts, "binary-body-mode=true")
-	}
-	if rw.WakeSystem {
-		parts = append(parts, "wake-system=true")
-	}
-	if rw.Engine != "" {
-		parts = append(parts, fmt.Sprintf("engine=%s", rw.Engine))
-	}
-	if rw.ImgURL != "" {
-		parts = append(parts, fmt.Sprintf("img-url=%s", rw.ImgURL))
+	if rw.Tag != "" {
+		scriptName = rw.Tag
 	}
 
-	out.Scripts = append(out.Scripts, scriptName+" = "+strings.Join(parts, ", "))
+	// Upstream appends "_<num>" to each script name and dedups by URL
+	// (line 1652). We approximate with a per-output counter keyed by name.
+	if out.stashNameIdx == nil {
+		out.stashNameIdx = map[string]int{}
+	}
+	idx := out.stashNameIdx[scriptName]
+	out.stashNameIdx[scriptName] = idx + 1
+	stashName := scriptName
+	if idx > 0 {
+		stashName = fmt.Sprintf("%s_%d", scriptName, idx)
+	}
+
+	jsurl := rw.ScriptPath
+	provider := fmt.Sprintf("  \"%s\":\n    url: %s\n    interval: 86400", stashName, jsurl)
+
+	switch {
+	case rw.ScriptType == "http-request" || rw.ScriptType == "http-response":
+		// type strips the "http-" prefix on Stash (line 1676: jstype.replace(/http-/,'')).
+		stashType := strings.TrimPrefix(rw.ScriptType, "http-")
+		var lines []string
+		lines = append(lines, "    - match: "+rw.Pattern)
+		lines = append(lines, `      name: "`+stashName+`"`)
+		lines = append(lines, "      type: "+stashType)
+		if rw.RequiresBody {
+			lines = append(lines, "      require-body: true")
+		}
+		if rw.MaxSize != "" {
+			lines = append(lines, "      max-size: "+rw.MaxSize)
+		}
+		if rw.BinaryBody {
+			lines = append(lines, "      binary-mode: true")
+		}
+		lines = append(lines, fmt.Sprintf("      timeout: %d", timeout))
+		if rw.Arguments != "" {
+			lines = append(lines, "      argument: |-\n        "+rw.Arguments)
+		}
+		out.StashScripts = append(out.StashScripts, strings.Join(lines, "\n"))
+		out.StashProviders = append(out.StashProviders, provider)
+
+	case rw.ScriptType == "cron":
+		cronexp := rw.CronExp
+		if cronexp == "" {
+			cronexp = "0 0 * * *"
+		}
+		cronexp = strings.ReplaceAll(cronexp, `"`, "")
+		var lines []string
+		lines = append(lines, `    - name: "`+stashName+`"`)
+		lines = append(lines, "      cron: "+cronexp)
+		lines = append(lines, fmt.Sprintf("      timeout: %d", timeout))
+		if rw.Arguments != "" {
+			lines = append(lines, "      argument: |-\n        "+rw.Arguments)
+		}
+		out.StashCron = append(out.StashCron, strings.Join(lines, "\n"))
+		out.StashProviders = append(out.StashProviders, provider)
+
+	case rw.ScriptType == "generic":
+		// Tiles output. Default background color matches upstream.
+		bgColor := "#5d84f8"
+		tilesTargets := util.GetArgArr(args["tiles"])
+		tilesColors := util.GetArgArr(args["tcolor"])
+		for i, t := range tilesTargets {
+			if t == scriptName && i < len(tilesColors) {
+				bgColor = strings.ReplaceAll(tilesColors[i], "@", "#")
+				break
+			}
+		}
+		icon := rw.ImgURL
+		var lines []string
+		lines = append(lines, `  - name: "`+stashName+`"`)
+		lines = append(lines, `    interval: 3600`)
+		lines = append(lines, `    title: "`+stashName+`"`)
+		lines = append(lines, `    icon: "`+icon+`"`)
+		lines = append(lines, `    backgroundColor: "`+bgColor+`"`)
+		lines = append(lines, fmt.Sprintf("    timeout: %d", timeout))
+		if rw.Arguments != "" {
+			lines = append(lines, "    argument: |-\n      "+rw.Arguments)
+		}
+		out.StashTiles = append(out.StashTiles, strings.Join(lines, "\n"))
+		out.StashProviders = append(out.StashProviders, provider)
+
+	default:
+		// event / network-changed / rule / dns: upstream pushes the original
+		// line to otherRule. We have no raw line in the IR, so emit nothing.
+	}
 }
 
 // formatSurgeOutput assembles the Surge .sgmodule format.
@@ -515,6 +736,7 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 	var modInputBox []InputBoxEntry
 	var bodyRewrites []BodyRewriteEntry
 	var skipProxy, realIP []string
+	var loonHosts []string
 	delComments := util.IsTrue(args["del"])
 
 	for _, mod := range modules {
@@ -547,6 +769,15 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 		for _, br := range mod.BodyRewrites {
 			if rw := loonBodyRewrite(br); rw != "" {
 				rewrites = append(rewrites, rw)
+			}
+		}
+		// Hosts: normal host → [Host]; script host → [Rule] (otherRule per
+		// upstream Rewrite-Parser.js line 1395-1397).
+		for _, host := range mod.Hosts {
+			if strings.Contains(host.Value, "script:") {
+				rules = append(rules, host.Raw)
+			} else {
+				loonHosts = append(loonHosts, fmt.Sprintf("%s = %s", host.Domain, host.Value))
 			}
 		}
 	}
@@ -612,6 +843,13 @@ func (p *Parser) convertToLoonFormat(modules []ParsedModule, target string, args
 		sb.WriteString("[Rewrite]\n")
 		for _, r := range rewrites {
 			sb.WriteString(r + "\n")
+		}
+		sb.WriteString("\n")
+	}
+	if len(loonHosts) > 0 {
+		sb.WriteString("[Host]\n")
+		for _, h := range loonHosts {
+			sb.WriteString(h + "\n")
 		}
 		sb.WriteString("\n")
 	}
@@ -688,7 +926,24 @@ func (p *Parser) convertLoonRewrite(rw ParsedRewrite) string {
 	case RewriteTypeReject, RewriteTypeRejectDict, RewriteTypeRejectImg,
 		RewriteTypeRejectTinyGif, RewriteTypeReject200, RewriteTypeRejectArray,
 		RewriteTypeRejectVideo, RewriteTypeRejectDrop:
-		return fmt.Sprintf("%s url-reject", rw.Pattern)
+		// Loon [Rewrite] uses "PATTERN reject-type" (not the QX-style "url-reject").
+		// Per upstream Rewrite-Parser.js, reject-tinygif → reject-img on Loon;
+		// reject / reject-dict / reject-img / reject-200 / reject-array pass through.
+		// reject-video / reject-drop have no Loon equivalent → plain reject.
+		switch rw.Type {
+		case RewriteTypeRejectDict:
+			return fmt.Sprintf("%s reject-dict", rw.Pattern)
+		case RewriteTypeRejectImg:
+			return fmt.Sprintf("%s reject-img", rw.Pattern)
+		case RewriteTypeRejectTinyGif:
+			return fmt.Sprintf("%s reject-img", rw.Pattern)
+		case RewriteTypeReject200:
+			return fmt.Sprintf("%s reject-200", rw.Pattern)
+		case RewriteTypeRejectArray:
+			return fmt.Sprintf("%s reject-array", rw.Pattern)
+		default:
+			return fmt.Sprintf("%s reject", rw.Pattern)
+		}
 
 	case RewriteTypeURLRewrite:
 		return fmt.Sprintf("%s %s", rw.Pattern, rw.Replacement)
@@ -712,7 +967,9 @@ func (p *Parser) convertLoonRewrite(rw ParsedRewrite) string {
 		return rw.Replacement
 
 	case RewriteTypeMock, RewriteTypeMockRequestBody:
-		// Loon mock-response-body / mock-request-body
+		// Loon mock-response-body / mock-request-body.
+		// Upstream Rewrite-Parser.js (loon-plugin branch) emits NO header field;
+		// data precedence is data-path (datapath) > data > mockurl (as data-path).
 		mockBodyType := "mock-response-body"
 		if rw.Type == RewriteTypeMockRequestBody {
 			mockBodyType = "mock-request-body"
@@ -721,16 +978,16 @@ func (p *Parser) convertLoonRewrite(rw ParsedRewrite) string {
 		if rw.MockType != "" {
 			ml += fmt.Sprintf(" data-type=%s", rw.MockType)
 		}
-		if rw.MockData != "" {
+		if rw.MockDataPath != "" {
+			ml += fmt.Sprintf(" data-path=%s", rw.MockDataPath)
+		} else if rw.MockData != "" {
 			ml += fmt.Sprintf(` data="%s"`, rw.MockData)
-		} else if rw.MockDataPath != "" {
-			ml += fmt.Sprintf(` data-path="%s"`, rw.MockDataPath)
 		}
 		if rw.MockStatus != "" {
 			ml += fmt.Sprintf(" status-code=%s", rw.MockStatus)
 		}
-		if rw.MockHeader != "" {
-			ml += fmt.Sprintf(` header="%s"`, rw.MockHeader)
+		if rw.MockBase64 {
+			ml += " mock-data-is-base64=true"
 		}
 		return ml
 
@@ -739,26 +996,83 @@ func (p *Parser) convertLoonRewrite(rw ParsedRewrite) string {
 	}
 }
 
-// convertSurgeHeaderRewriteToLoon converts Surge [Header Rewrite] to Loon [Rewrite].
-func convertSurgeHeaderRewriteToLoon(line string) string {
-	parts := strings.Fields(line)
-	if len(parts) >= 5 && parts[1] == "header-rewrite" {
-		direction := parts[2] // request-header or response-header
-		pattern := parts[0]
-		match := parts[3]
-		replace := strings.Join(parts[4:], " ")
-
-		loondir := "url-request-header"
-		if strings.HasPrefix(direction, "response") {
-			loondir = "url-response-header"
-		}
-		return fmt.Sprintf("%s %s %s %s", pattern, loondir, match, replace)
+// convertSurgeHeaderRewriteToStash converts a Surge [Header Rewrite] line to a
+// Stash header-rewrite entry.
+//
+// Upstream Rewrite-Parser.js (stash-stoverride branch, lines 1382-1385) only
+// ever runs this transform on lines that were normalized into rwhdBox with a
+// leading "http-request "/"http-response " prefix — and that normalization only
+// happens for Loon-plugin sources (lines 678-728). Surge [Header Rewrite] raw
+// lines (e.g. "^url header-request header-add K V") are NOT parsed into rwhdBox
+// upstream at all, so upstream silently drops them for Stash/Loon targets.
+//
+// To stay faithful while still surfacing the rule to the user, we:
+//   - Apply the upstream transform (strip http-{request,response} prefix, then
+//     replace the first " header-" with " request-"/" response-") when the line
+//     is in the normalized (Loon-origin) form.
+//   - Otherwise (Surge-origin raw line), emit the line commented-out so the user
+//     sees it but Stash does not receive a malformed entry. This matches the
+//     upstream "silently dropped" outcome while being more transparent.
+func convertSurgeHeaderRewriteToStash(line string) string {
+	isResponse := strings.HasPrefix(line, "http-response ")
+	if strings.HasPrefix(line, "http-request ") {
+		line = strings.TrimPrefix(line, "http-request ")
+	} else if strings.HasPrefix(line, "http-response ") {
+		line = strings.TrimPrefix(line, "http-response ")
+	} else {
+		// Surge-origin raw line: not convertible by the upstream transform.
+		return "# " + line
 	}
-	// Fallback: return as-is
+	hdtype := " request-"
+	if isResponse {
+		hdtype = " response-"
+	}
+	if idx := strings.Index(line, " header-"); idx >= 0 {
+		line = line[:idx] + hdtype + line[idx+len(" header-"):]
+	}
+	return line
+}
+
+// convertSurgeHeaderRewriteToLoon converts a Surge [Header Rewrite] line to a
+// Loon [Rewrite] entry.
+//
+// Upstream Rewrite-Parser.js (loon-plugin branch, lines 1361-1366) only ever
+// runs this transform on rwhdBox entries that were normalized with a leading
+// "http-request "/"http-response " prefix — and that normalization only happens
+// for Loon-plugin sources (lines 678-728). Surge [Header Rewrite] raw lines are
+// NOT parsed into rwhdBox upstream, so they are silently dropped for Loon.
+//
+// To stay faithful while still surfacing the rule to the user:
+//   - For normalized (Loon-origin) form, apply the upstream transform (strip
+//     http-{request,response} prefix; for response rewrites, replace the first
+//     " header-" with " response-header-").
+//   - For Surge-origin raw lines, emit commented-out so the Loon [Rewrite]
+//     section does not receive a malformed entry.
+func convertSurgeHeaderRewriteToLoon(line string) string {
+	isResponse := strings.HasPrefix(line, "http-response ")
+	if strings.HasPrefix(line, "http-request ") {
+		line = strings.TrimPrefix(line, "http-request ")
+	} else if strings.HasPrefix(line, "http-response ") {
+		line = strings.TrimPrefix(line, "http-response ")
+	} else {
+		return "# " + line
+	}
+	if isResponse {
+		if idx := strings.Index(line, " header-"); idx >= 0 {
+			line = line[:idx] + " response-header-" + line[idx+len(" header-"):]
+		}
+	}
 	return line
 }
 
 func (p *Parser) convertLoonScript(rw ParsedRewrite) string {
+	// Per upstream Rewrite-Parser.js, Loon does not emit [Script] entries for
+	// "generic" tiles (those are pushed as-is to otherRule / handled as tiles).
+	// Return empty so the Loon converter skips this entry in [Script].
+	if rw.ScriptType == "generic" {
+		return ""
+	}
+
 	timeout := rw.Timeout
 	if timeout == 0 {
 		timeout = 30
@@ -769,7 +1083,7 @@ func (p *Parser) convertLoonScript(rw ParsedRewrite) string {
 		scriptName = sanitizeName(rw.Pattern)
 	}
 
-	// Loon cron format: cron "expression" script-path=..., tag=name, enable=..., img-url=..., argument=...
+	// Loon cron format: cron "expression" script-path=URL, timeout=N, tag=name, enable=..., img-url=..., argument=...
 	if rw.ScriptType == "cron" {
 		cronexp := rw.CronExp
 		if cronexp == "" {
@@ -793,25 +1107,379 @@ func (p *Parser) convertLoonScript(rw ParsedRewrite) string {
 		return strings.Join(parts, ", ")
 	}
 
+	// Surge "event" maps to Loon "network-changed" (upstream lines 1489-1490).
+	// network-changed has no pattern.
+	// Surge "event" maps to Loon "network-changed" (upstream lines 1489-1490);
+	// network-changed has no pattern. http-request / http-response keep their
+	// type name verbatim.
+	scriptType := rw.ScriptType
+	pattern := rw.Pattern
+	if scriptType == "event" {
+		scriptType = "network-changed"
+		pattern = ""
+	}
+	// Loon-origin network-changed scripts already carry ScriptType="network-changed"
+	// and store "network-changed" as the Pattern; drop the redundant pattern so the
+	// round-trip output is "network-changed script-path=..." not "network-changed network-changed ...".
+	if scriptType == "network-changed" {
+		pattern = ""
+	}
+
+	// Field order per upstream Loon branch (lines 1604-1614):
+	// script-path, requires-body, binary-body-mode, timeout, tag, enable, img-url, argument
 	var opts []string
 	opts = append(opts, fmt.Sprintf("script-path=%s", rw.ScriptPath))
-	opts = append(opts, fmt.Sprintf("timeout=%d", timeout))
-	opts = append(opts, fmt.Sprintf("tag=%s", scriptName))
 	if rw.RequiresBody {
 		opts = append(opts, "requires-body=true")
 	}
-	if rw.Arguments != "" {
-		opts = append(opts, fmt.Sprintf("argument=%s", rw.Arguments))
+	if rw.BinaryBody {
+		opts = append(opts, "binary-body-mode=true")
 	}
+	opts = append(opts, fmt.Sprintf("timeout=%d", timeout))
+	opts = append(opts, fmt.Sprintf("tag=%s", scriptName))
 	if rw.Enable {
 		opts = append(opts, "enable=true")
 	}
 	if rw.ImgURL != "" {
 		opts = append(opts, fmt.Sprintf("img-url=%s", rw.ImgURL))
 	}
+	if rw.Arguments != "" {
+		opts = append(opts, fmt.Sprintf("argument=%s", rw.Arguments))
+	}
 
-	scriptType := strings.TrimPrefix(rw.ScriptType, "http-")
-	return fmt.Sprintf("http-%s %s %s", scriptType, rw.Pattern, strings.Join(opts, ", "))
+	if pattern != "" {
+		return fmt.Sprintf("%s %s %s", scriptType, pattern, strings.Join(opts, ", "))
+	}
+	return fmt.Sprintf("%s %s", scriptType, strings.Join(opts, ", "))
+}
+
+// --- Quantumult X ---
+
+// convertToQXFormat converts parsed modules to a Quantumult X rewrite config.
+// Output sections: [rewrite_local] (rewrites + http scripts), [task_local] (cron scripts),
+// [mitm] (hostname list). Rules and metadata are emitted as comments since QX does not
+// carry them in the rewrite config. This closes the plugin-to-plugin conversion matrix:
+// any source (Surge/Shadowrocket/Loon/Stash/Egern/LanceX) can be turned into a QX rewrite.
+func (p *Parser) convertToQXFormat(modules []ParsedModule, target string, args map[string]string) string {
+	var rewrites []string // [rewrite_local]
+	var tasks []string    // [task_local]
+	var mitm []string
+	var rules []string
+	var hosts []string
+	var name, desc, icon string
+	delComments := util.IsTrue(args["del"])
+
+	for _, mod := range modules {
+		name = mod.Name
+		desc = mod.Desc
+		icon = mod.Icon
+		mitm = append(mitm, mod.MITM...)
+		rules = append(rules, mod.Rules...)
+		for _, host := range mod.Hosts {
+			hosts = append(hosts, fmt.Sprintf("%s = %s", host.Domain, host.Value))
+		}
+
+		for _, rw := range mod.Rewrites {
+			if line := p.convertQXRewrite(rw); line != "" {
+				rewrites = append(rewrites, line)
+			}
+		}
+		// Body rewrite entries: emit as QX body rewrite lines
+		for _, br := range mod.BodyRewrites {
+			if line := qxBodyRewrite(br); line != "" {
+				rewrites = append(rewrites, line)
+			}
+		}
+		// Scripts: cron → [task_local], http → [rewrite_local]
+		for _, rw := range mod.Scripts {
+			if line := p.convertQXScript(rw); line != "" {
+				if rw.ScriptType == "cron" {
+					tasks = append(tasks, line)
+				} else {
+					rewrites = append(rewrites, line)
+				}
+			}
+		}
+	}
+
+	mitm = uniqueStrings(mitm)
+
+	if delComments {
+		rewrites = filterCommented(rewrites)
+		tasks = filterCommented(tasks)
+		rules = filterCommented(rules)
+	}
+
+	var sb strings.Builder
+	// Metadata as comments (QX rewrite config has no module metadata syntax)
+	if name != "" {
+		sb.WriteString("#!name=" + name + "\n")
+	}
+	if desc != "" {
+		sb.WriteString("#!desc=" + desc + "\n")
+	}
+	if icon != "" {
+		sb.WriteString("#!icon=" + icon + "\n")
+	}
+	sb.WriteString("\n")
+
+	if len(rules) > 0 {
+		// QX carries rules in [filter_local] / [filter_remote]; emit as comment block
+		// so the user can copy them into the right section of the QX config.
+		sb.WriteString("# 规则（请按需复制到 [filter_local]）：\n")
+		for _, r := range rules {
+			sb.WriteString("# " + r + "\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(rewrites) > 0 {
+		sb.WriteString("[rewrite_local]\n")
+		for _, r := range rewrites {
+			sb.WriteString(r + "\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(tasks) > 0 {
+		sb.WriteString("[task_local]\n")
+		for _, t := range tasks {
+			sb.WriteString(t + "\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(hosts) > 0 {
+		sb.WriteString("[host]\n")
+		for _, h := range hosts {
+			sb.WriteString(h + "\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(mitm) > 0 {
+		sb.WriteString("[mitm]\n")
+		sb.WriteString("hostname = " + strings.Join(mitm, ", ") + "\n")
+	}
+
+	return sb.String()
+}
+
+// convertQXRewrite converts a rewrite entry to a Quantumult X rewrite_local line.
+// QX format: PATTERN url TYPE [args]
+func (p *Parser) convertQXRewrite(rw ParsedRewrite) string {
+	switch rw.Type {
+	case RewriteTypeRequestHeader:
+		// QX native: PATTERN url request-header MATCH request-header REPLACE
+		if rw.MatchPart != "" && rw.ReplacePart != "" {
+			return fmt.Sprintf("%s url request-header %s request-header %s", rw.Pattern, rw.MatchPart, rw.ReplacePart)
+		}
+		parts := strings.SplitN(rw.Replacement, "->", 2)
+		if len(parts) == 2 {
+			return fmt.Sprintf("%s url request-header %s request-header %s", rw.Pattern, parts[0], parts[1])
+		}
+		return fmt.Sprintf("%s url request-header %s request-header %s", rw.Pattern, rw.Replacement, rw.Replacement)
+
+	case RewriteTypeResponseHeader:
+		if rw.MatchPart != "" && rw.ReplacePart != "" {
+			return fmt.Sprintf("%s url response-header %s response-header %s", rw.Pattern, rw.MatchPart, rw.ReplacePart)
+		}
+		parts := strings.SplitN(rw.Replacement, "->", 2)
+		if len(parts) == 2 {
+			return fmt.Sprintf("%s url response-header %s response-header %s", rw.Pattern, parts[0], parts[1])
+		}
+		return fmt.Sprintf("%s url response-header %s response-header %s", rw.Pattern, rw.Replacement, rw.Replacement)
+
+	case RewriteTypeRequestBody:
+		if rw.MatchPart != "" && rw.ReplacePart != "" {
+			return fmt.Sprintf("%s url request-body %s request-body %s", rw.Pattern, rw.MatchPart, rw.ReplacePart)
+		}
+		return fmt.Sprintf("%s url request-body %s request-body %s", rw.Pattern, rw.Replacement, rw.Replacement)
+
+	case RewriteTypeResponseBody:
+		if rw.MatchPart != "" && rw.ReplacePart != "" {
+			return fmt.Sprintf("%s url response-body %s response-body %s", rw.Pattern, rw.MatchPart, rw.ReplacePart)
+		}
+		return fmt.Sprintf("%s url response-body %s response-body %s", rw.Pattern, rw.Replacement, rw.Replacement)
+
+	case RewriteTypeReject, RewriteTypeRejectDict, RewriteTypeRejectImg,
+		RewriteTypeRejectTinyGif, RewriteTypeReject200, RewriteTypeRejectArray,
+		RewriteTypeRejectVideo, RewriteTypeRejectDrop:
+		// QX supports reject / reject-dict / reject-img / reject-tinygif / reject-200 / reject-array.
+		// reject-drop / reject-video are not native QX types; fall back to reject.
+		switch rw.Type {
+		case RewriteTypeRejectDict:
+			return fmt.Sprintf("%s url reject-dict", rw.Pattern)
+		case RewriteTypeRejectImg:
+			return fmt.Sprintf("%s url reject-img", rw.Pattern)
+		case RewriteTypeRejectTinyGif:
+			return fmt.Sprintf("%s url reject-tinygif", rw.Pattern)
+		case RewriteTypeReject200:
+			return fmt.Sprintf("%s url reject-200", rw.Pattern)
+		case RewriteTypeRejectArray:
+			return fmt.Sprintf("%s url reject-array", rw.Pattern)
+		default:
+			// RewriteTypeReject, RewriteTypeRejectDrop, RewriteTypeRejectVideo
+			return fmt.Sprintf("%s url reject", rw.Pattern)
+		}
+
+	case RewriteTypeURLRewrite:
+		// Surge/Loon URL rewrite target may be "302 URL" / "307 URL", a bare URL,
+		// or already carry a QX-style keyword (request-data / reject-* / 302 ...).
+		rep := rw.Replacement
+		fields := strings.Fields(rep)
+		if len(fields) >= 2 && (fields[0] == "302" || fields[0] == "307") {
+			return fmt.Sprintf("%s url %s %s", rw.Pattern, fields[0], strings.Join(fields[1:], " "))
+		}
+		// Already a QX rewrite keyword + target: emit verbatim after "url".
+		if len(fields) >= 2 && isQXRewriteKeyword(fields[0]) {
+			return fmt.Sprintf("%s url %s", rw.Pattern, rep)
+		}
+		if rep != "" {
+			// Bare URL redirect: in QX, "<pattern> url <URL>" is a 302 redirect.
+			// (request-data would wrongly rewrite the request body.)
+			return fmt.Sprintf("%s url %s", rw.Pattern, rep)
+		}
+		return ""
+
+	case RewriteTypeHeaderRewrite:
+		// Surge [Header Rewrite] pass-through line → best-effort QX request/response-header
+		return convertSurgeHeaderRewriteToQX(rw.Replacement)
+
+	case RewriteTypeEchoResponse:
+		dataType := rw.EchoCT
+		if dataType == "" {
+			dataType = "text/plain"
+		}
+		if rw.EchoURL != "" {
+			return fmt.Sprintf("%s url echo-response %s %s", rw.Pattern, dataType, rw.EchoURL)
+		}
+		return fmt.Sprintf("%s url echo-response %s", rw.Pattern, dataType)
+
+	case RewriteTypeMapLocal:
+		// No direct QX equivalent; emit as comment for manual handling.
+		return "# [Map Local 无 QX 等价] " + rw.Replacement
+
+	case RewriteTypeMock, RewriteTypeMockRequestBody:
+		return "# [mock 无原生 QX 等价] " + rw.Pattern + " data-type=" + rw.MockType
+
+	default:
+		return ""
+	}
+}
+
+// qxBodyRewrite converts a BodyRewriteEntry to a QX rewrite_local line.
+// jq types → request/response-body-json-jq; replace-regex → request/response-body.
+func qxBodyRewrite(br BodyRewriteEntry) string {
+	switch br.Type {
+	case "http-request-jq":
+		return fmt.Sprintf("%s url request-body-json-jq %s", br.Regex, br.Value)
+	case "http-response-jq":
+		return fmt.Sprintf("%s url response-body-json-jq %s", br.Regex, br.Value)
+	case "http-request":
+		// Surge/Loon [Body Rewrite] stores only URL pattern + replacement; there is no
+		// separate body-match field. QX `request-body MATCH request-body REPLACE` requires
+		// an explicit body regex, so a faithful round-trip is impossible. Upstream
+		// Rewrite-Parser.js has no QX body-rewrite output branch at all. Emit a comment
+		// rather than silently corrupting the rule (using Value as both MATCH and REPLACE
+		// would be wrong).
+		return fmt.Sprintf("# [Body Rewrite %s %s] no QX equivalent (needs explicit body-match)", br.Regex, br.Value)
+	case "http-response":
+		return fmt.Sprintf("# [Body Rewrite %s %s] no QX equivalent (needs explicit body-match)", br.Regex, br.Value)
+	}
+	return ""
+}
+
+// convertSurgeHeaderRewriteToQX converts a Surge [Header Rewrite] directive to a QX
+// request-header / response-header rewrite. Surge form:
+//
+//	PATTERN header-rewrite {request,response}-header MATCH REPLACE
+func convertSurgeHeaderRewriteToQX(line string) string {
+	parts := strings.Fields(line)
+	if len(parts) >= 5 && parts[1] == "header-rewrite" {
+		direction := parts[2] // request-header or response-header
+		pattern := parts[0]
+		match := parts[3]
+		replace := strings.Join(parts[4:], " ")
+		qxType := "request-header"
+		if strings.HasPrefix(direction, "response") {
+			qxType = "response-header"
+		}
+		return fmt.Sprintf("%s url %s %s %s %s", pattern, qxType, match, qxType, replace)
+	}
+	return "# [Header Rewrite] " + line
+}
+
+// convertQXScript converts a script entry to a QX line.
+// http-{request,response}-{header,body} → [rewrite_local]; cron → [task_local].
+func (p *Parser) convertQXScript(rw ParsedRewrite) string {
+	// Cron script → QX [task_local]: CRON EXPRESSION SCRIPT_PATH, tag=NAME
+	if rw.ScriptType == "cron" {
+		cronexp := rw.CronExp
+		if cronexp == "" {
+			cronexp = "0 0 * * *"
+		}
+		cronexp = strings.ReplaceAll(cronexp, `"`, "")
+		line := fmt.Sprintf("%s %s", cronexp, rw.ScriptPath)
+		tag := rw.Tag
+		if tag == "" {
+			tag = rw.Replacement
+		}
+		if tag == "" {
+			tag = sanitizeName(rw.ScriptPath)
+		}
+		line += ", tag=" + tag
+		if rw.Enable {
+			line += ", enabled=true"
+		}
+		if rw.ImgURL != "" {
+			line += fmt.Sprintf(", img-url=%s", rw.ImgURL)
+		}
+		return line
+	}
+
+	// http-{request,response}-{header,body} → PATTERN url script-TYPE SCRIPT_PATH
+	qxType := qxScriptType(rw.ScriptType, rw.RequiresBody, rw.BodyType)
+	if qxType == "" {
+		// Unknown / generic script: emit as comment so it is not silently dropped.
+		return "# [未识别脚本类型] " + rw.ScriptType + " " + rw.ScriptPath
+	}
+	if rw.ScriptPath == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s url %s %s", rw.Pattern, qxType, rw.ScriptPath)
+}
+
+// qxScriptType maps a Surge/Loon http script type to the QX script- keyword.
+// QX keywords: script-request-header, script-request-body,
+// script-response-header, script-response-body.
+func qxScriptType(scriptType string, requiresBody bool, bodyType string) string {
+	t := strings.TrimPrefix(scriptType, "http-")
+	switch t {
+	case "request":
+		if requiresBody || bodyType == "request-body" {
+			return "script-request-body"
+		}
+		return "script-request-header"
+	case "response":
+		if requiresBody || bodyType == "response-body" {
+			return "script-response-body"
+		}
+		return "script-response-header"
+	}
+	return ""
+}
+
+// isQXRewriteKeyword reports whether kw is a QX rewrite type keyword
+// (so a parsed URL-rewrite replacement already in QX form can be emitted verbatim).
+func isQXRewriteKeyword(kw string) bool {
+	switch kw {
+	case "request-header", "response-header", "request-body", "response-body",
+		"echo-response", "reject", "reject-dict", "reject-img", "reject-tinygif",
+		"reject-200", "reject-array", "request-data", "302", "307":
+		return true
+	}
+	return false
 }
 
 // --- Stash ---
@@ -838,10 +1506,17 @@ func (p *Parser) convertToStashFormat(modules []ParsedModule, target string, arg
 		out.Rules = append(out.Rules, mod.Rules...)
 
 		for _, rw := range mod.Rewrites {
-			p.classifySurgeRewrite(rw, &out, args)
+			p.classifySurgeRewrite(rw, &out, target, args)
 		}
 		for _, rw := range mod.Scripts {
-			p.classifySurgeScript(rw, &out, args)
+			// Stash has its own native YAML script format; do NOT reuse the
+			// Surge-style classifySurgeScript line builder.
+			p.classifyStashScript(rw, &out, args)
+		}
+		// Hosts: Stash has no [Host] section; upstream pushes every host
+		// entry to otherRule (Rewrite-Parser.js line 1392-1393).
+		for _, host := range mod.Hosts {
+			out.Rules = append(out.Rules, host.Raw)
 		}
 	}
 
@@ -910,133 +1585,15 @@ func (p *Parser) formatStashOutput(out surgeOutput, modules []ParsedModule, args
 		sb.WriteString("\n")
 	}
 
-	// Collect tiles and cron from scripts
-	var tiles, cronEntries, providers, otherScripts []string
-	tilesTargets := util.GetArgArr(args["tiles"])
-	tilesColors := util.GetArgArr(args["tcolor"])
-
-	for _, s := range out.Scripts {
-		// Parse script name and fields
-		nameEnd := strings.Index(s, " = ")
-		scriptName := s
-		rest := ""
-		if nameEnd >= 0 {
-			scriptName = s[:nameEnd]
-			rest = s[nameEnd+3:]
-		}
-
-		// Detect script type
-		scriptType := ""
-		if idx := strings.Index(rest, "type="); idx >= 0 {
-			typeEnd := strings.IndexByte(rest[idx+5:], ',')
-			if typeEnd >= 0 {
-				scriptType = rest[idx+5 : idx+5+typeEnd]
-			} else {
-				scriptType = rest[idx+5:]
-			}
-		}
-
-		// Extract script-path for providers
-		scriptPath := ""
-		if idx := strings.Index(rest, "script-path="); idx >= 0 {
-			spStart := idx + len("script-path=")
-			spEnd := strings.IndexByte(rest[spStart:], ',')
-			if spEnd >= 0 {
-				scriptPath = rest[spStart : spStart+spEnd]
-			} else {
-				scriptPath = rest[spStart:]
-			}
-			scriptPath = cleanRegexEscapes(scriptPath)
-		}
-
-		switch {
-		case scriptType == "generic":
-			// Tiles output
-			icon := ""
-			if idx := strings.Index(rest, "img-url="); idx >= 0 {
-				iStart := idx + len("img-url=")
-				iEnd := strings.IndexByte(rest[iStart:], ',')
-				if iEnd >= 0 {
-					icon = rest[iStart : iStart+iEnd]
-				} else {
-					icon = rest[iStart:]
-				}
-			}
-			bgColor := "#5d84f8"
-			for i, t := range tilesTargets {
-				if t == scriptName && i < len(tilesColors) {
-					bgColor = tilesColors[i]
-					break
-				}
-			}
-			var tileParts []string
-			tileParts = append(tileParts, `  - name: "`+scriptName+`"`)
-			tileParts = append(tileParts, `    interval: 3600`)
-			tileParts = append(tileParts, `    title: "`+scriptName+`"`)
-			tileParts = append(tileParts, `    icon: "`+icon+`"`)
-			tileParts = append(tileParts, `    backgroundColor: "`+bgColor+`"`)
-			if idx := strings.Index(rest, "timeout="); idx >= 0 {
-				tStart := idx + len("timeout=")
-				tEnd := strings.IndexByte(rest[tStart:], ',')
-				tv := ""
-				if tEnd >= 0 {
-					tv = rest[tStart : tStart+tEnd]
-				} else {
-					tv = rest[tStart:]
-				}
-				tileParts = append(tileParts, "    timeout: "+tv)
-			}
-			if idx := strings.Index(rest, "argument="); idx >= 0 {
-				aStart := idx + len("argument=")
-				tileParts = append(tileParts, "    argument: "+rest[aStart:])
-			}
-			tiles = append(tiles, strings.Join(tileParts, "\n"))
-			if scriptPath != "" {
-				providers = append(providers, fmt.Sprintf(`  "%s":%s    url: %s%s    interval: 86400`, scriptName, "\n", scriptPath, "\n"))
-			}
-
-		case scriptType == "cron":
-			// Cron output
-			cronexp := "0 0 * * *"
-			if idx := strings.Index(rest, "cronexp="); idx >= 0 {
-				cStart := idx + len("cronexp=")
-				cEnd := strings.IndexByte(rest[cStart:], ',')
-				if cEnd >= 0 {
-					cronexp = rest[cStart : cStart+cEnd]
-				} else {
-					cronexp = rest[cStart:]
-				}
-			}
-			var cronParts []string
-			cronParts = append(cronParts, `    - name: "`+scriptName+`"`)
-			cronParts = append(cronParts, "      cron: "+cronexp)
-			if idx := strings.Index(rest, "timeout="); idx >= 0 {
-				tStart := idx + len("timeout=")
-				tEnd := strings.IndexByte(rest[tStart:], ',')
-				tv := ""
-				if tEnd >= 0 {
-					tv = rest[tStart : tStart+tEnd]
-				} else {
-					tv = rest[tStart:]
-				}
-				cronParts = append(cronParts, "      timeout: "+tv)
-			}
-			cronEntries = append(cronEntries, strings.Join(cronParts, "\n"))
-			if scriptPath != "" {
-				providers = append(providers, fmt.Sprintf(`  "%s":%s    url: %s%s    interval: 86400`, scriptName, "\n", scriptPath, "\n"))
-			}
-
-		default:
-			otherScripts = append(otherScripts, s)
-			if scriptPath != "" {
-				providers = append(providers, fmt.Sprintf(`  "%s":%s    url: %s%s    interval: 86400`, scriptName, "\n", scriptPath, "\n"))
-			}
-		}
-	}
+	// Scripts were classified into Stash-native buffers by classifyStashScript.
+	tiles := out.StashTiles
+	cronEntries := out.StashCron
+	providers := out.StashProviders
+	stashScripts := out.StashScripts
 
 	// HTTP frame
 	hasHTTP := len(out.MITM) > 0 || len(out.HeaderRewrites) > 0 ||
-		len(out.URLRewrites) > 0 || len(otherScripts) > 0 ||
+		len(out.URLRewrites) > 0 || len(stashScripts) > 0 ||
 		len(out.BodyRewrites) > 0 || len(out.MapLocal) > 0 ||
 		len(out.ForceHTTPHosts) > 0
 
@@ -1064,14 +1621,26 @@ func (p *Parser) formatStashOutput(out surgeOutput, modules []ParsedModule, args
 		if len(out.HeaderRewrites) > 0 {
 			sb.WriteString("  header-rewrite:\n")
 			for _, r := range out.HeaderRewrites {
-				sb.WriteString("    - >-\n      " + r + "\n")
+				// Stash normalizes Surge header-rewrite lines per upstream
+				// (lines 1382-1385): strip http-request/http-response prefix
+				// and replace " header-" with " request-"/" response-".
+				sb.WriteString("    - >-\n      " + convertSurgeHeaderRewriteToStash(r) + "\n")
 			}
 		}
 
 		if len(out.URLRewrites) > 0 {
 			sb.WriteString("  url-rewrite:\n")
 			for _, r := range out.URLRewrites {
-				sb.WriteString("    - >-\n      " + r + "\n")
+				// Per upstream Rewrite-Parser.js line 1305, Stash maps
+				// reject-video / reject-tinygif -> reject-img, and
+				// header -> transparent. classifySurgeRewrite already routes
+				// reject-video to reject-tinygif (Surge/Shadowrocket mapping),
+				// so we normalize here for Stash-specific output.
+				normalized := r
+				normalized = strings.ReplaceAll(normalized, "reject-tinygif", "reject-img")
+				normalized = strings.ReplaceAll(normalized, "reject-video", "reject-img")
+				normalized = strings.ReplaceAll(normalized, " header", " transparent")
+				sb.WriteString("    - >-\n      " + normalized + "\n")
 			}
 		}
 
@@ -1084,22 +1653,27 @@ func (p *Parser) formatStashOutput(out surgeOutput, modules []ParsedModule, args
 		if len(out.BodyRewrites) > 0 {
 			sb.WriteString("  body-rewrite:\n")
 			for _, br := range out.BodyRewrites {
-				// Stash body-rewrite uses >- folded format
-				brType := br.Type
-				brType = strings.ReplaceAll(brType, "http-request", "request-replace-regex")
-				brType = strings.ReplaceAll(brType, "http-response", "response-replace-regex")
-				brType = strings.ReplaceAll(brType, "request-body", "request-replace-regex")
-				brType = strings.ReplaceAll(brType, "response-body", "response-replace-regex")
-				value := br.Value
-				value = strings.Trim(value, `"'`)
+				// Stash body-rewrite type mapping per upstream Rewrite-Parser.js
+				// (line 1848): strip leading "http-", then replace a bare
+				// "request"/"response" with "request-replace-regex"/
+				// "response-replace-regex". jq variants ("request-jq"/"response-jq")
+				// pass through unchanged.
+				brType := strings.TrimPrefix(br.Type, "http-")
+				switch brType {
+				case "request":
+					brType = "request-replace-regex"
+				case "response":
+					brType = "response-replace-regex"
+				}
+				value := stripMatchingOuterQuotes(br.Value)
 				sb.WriteString("    - >-\n      " + br.Regex + " " + brType + " " + value + "\n")
 			}
 		}
 
-		if len(otherScripts) > 0 {
+		if len(stashScripts) > 0 {
 			sb.WriteString("  script:\n")
-			for _, s := range otherScripts {
-				sb.WriteString("    - >-\n      " + s + "\n")
+			for _, s := range stashScripts {
+				sb.WriteString(s + "\n")
 			}
 		}
 	}
@@ -1319,6 +1893,24 @@ func uniqueStrings(s []string) []string {
 		}
 	}
 	return result
+}
+
+// stripMatchingOuterQuotes removes one matched pair of surrounding quotes
+// ("..." or '...') from value, mirroring Rewrite-Parser.js regex
+// /^"(.+)"$/.replace -> $1 then /^'(.+)'$/.replace -> $1. Unlike strings.Trim,
+// it only strips when the first and last characters form a matching pair, so
+// internal quotes are preserved untouched.
+func stripMatchingOuterQuotes(value string) string {
+	if len(value) >= 2 {
+		first, last := value[0], value[len(value)-1]
+		if first == '"' && last == '"' {
+			return value[1 : len(value)-1]
+		}
+		if first == '\'' && last == '\'' {
+			return value[1 : len(value)-1]
+		}
+	}
+	return value
 }
 
 func filterCommented(lines []string) []string {

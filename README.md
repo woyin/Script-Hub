@@ -9,7 +9,7 @@
 保留：
 
 - QX Rewrite、Surge Module、Loon Plugin 自动识别与互转
-- 输出 Surge Module、Loon Plugin、Stash Override、Shadowrocket Module
+- 输出 Surge/Egern/LanceX Module、Loon Plugin、Stash Override、Shadowrocket Module、QX Rewrite
 - 常见规则集转换为 Surge、Loon、Stash、Shadowrocket 规则集或域名集
 - 远程 HTTP(S) URL 和本地粘贴内容输入
 - 简单 Web UI、Docker 镜像、跨平台 Release
@@ -38,6 +38,16 @@ go build -o script-hub .
 docker pull ghcr.io/woyin/script-hub/script-hub:latest
 docker run --rm -p 9100:9100 ghcr.io/woyin/script-hub/script-hub:latest
 ```
+
+### Fly.io
+
+```bash
+fly launch --no-deploy
+fly deploy
+fly status
+```
+
+仓库内 `fly.toml` 使用 `breestealth-scripthub-go`、香港区域和 9100 端口。Fly.io 健康检查请求 `GET /healthz`。
 
 ## 环境变量
 
@@ -75,10 +85,15 @@ surge-module
 loon-plugin
 stash-stoverride
 shadowrocket-module
+egern-module
+lancex-module
+qx-rewrite
 surge-rule-set
 loon-rule-set
 stash-rule-set
 shadowrocket-rule-set
+egern-rule-set
+lancex-rule-set
 surge-domain-set
 stash-domain-set
 ```

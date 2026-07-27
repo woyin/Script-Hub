@@ -1,3 +1,9 @@
+// Input: encoding/json, fmt, net/url, regexp, strings, internal/util
+// Output: QX/Surge/Loon 各来源格式解析器（parseQXRewrite/parseSurgeModule/parseLoonPlugin 等）, 解析辅助函数与类型（SgArgument/PanelInfo/HostInfo）
+// Pos: 业务层-重写来源解析，将各平台原始格式逐行解析为统一中间表示
+//
+// 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
+
 package rewrite
 
 import (
@@ -1101,7 +1107,11 @@ func (p *Parser) parseLoonPlugin(content string, args map[string]string) []Parse
 			}
 			rw := parseLoonRewriteLine(line)
 			if rw != nil {
-				module.Rewrites = append(module.Rewrites, *rw)
+				if rw.Type == RewriteTypeBodyRewrite && rw.BodyRewrite != nil {
+					module.BodyRewrites = append(module.BodyRewrites, *rw.BodyRewrite)
+				} else {
+					module.Rewrites = append(module.Rewrites, *rw)
+				}
 				module.MITM = append(module.MITM, extractHostnames(rw.Pattern)...)
 			}
 		}
@@ -1214,6 +1224,29 @@ func parseLoonRewriteLine(line string) *ParsedRewrite {
 		strings.HasSuffix(rwType, "header-replace") || strings.HasSuffix(rwType, "header-replace-regex"):
 		// Loon: url-request-header-del / url-response-header-add / etc.
 		return parseLoonHeaderActionLine(line, parts)
+	case rwType == "request-body-replace-regex" || rwType == "response-body-replace-regex" ||
+		rwType == "request-body-json-jq" || rwType == "response-body-json-jq":
+		// Loon body rewrite inside [Rewrite]: <pattern> <type> <value>.
+		// Map Loon type to the canonical BodyRewriteEntry.Type used by the
+		// Surge [Body Rewrite] section and the QX-derived IR.
+		var canonical string
+		switch rwType {
+		case "request-body-replace-regex":
+			canonical = "http-request"
+		case "response-body-replace-regex":
+			canonical = "http-response"
+		case "request-body-json-jq":
+			canonical = "http-request-jq"
+		case "response-body-json-jq":
+			canonical = "http-response-jq"
+		}
+		value := ""
+		if len(parts) >= 3 {
+			value = strings.Join(parts[2:], " ")
+		}
+		rw.Type = RewriteTypeBodyRewrite
+		rw.BodyRewrite = &BodyRewriteEntry{Type: canonical, Regex: rw.Pattern, Value: value}
+		return &rw
 	default:
 		rw.Type = RewriteTypeURLRewrite
 		if len(parts) >= 2 {
@@ -1360,6 +1393,16 @@ func parseLoonScriptLine(line string) *ParsedRewrite {
 	if line == "" || strings.HasPrefix(line, "#") {
 		return nil
 	}
+
+	// Loon canonical [Script] form has no leading "name =":
+	//   http-response PATTERN script-path=URL, tag=NAME, requires-body=true
+	//   cron "0 8 * * *" script-path=URL, tag=NAME
+	// The Surge "name = config" form (parseSurgeScriptLine) is handled elsewhere;
+	// here detect Loon form by the presence of "script-path=" and parse by token.
+	if strings.Contains(line, "script-path=") {
+		return parseLoonScriptLineDirect(line)
+	}
+
 	parts := strings.SplitN(line, "=", 2)
 	if len(parts) < 2 {
 		return nil
@@ -1399,6 +1442,77 @@ func parseLoonScriptLine(line string) *ParsedRewrite {
 		}
 	}
 	rw.Type = RewriteTypeScript
+	if rw.Timeout == 0 {
+		rw.Timeout = 30
+	}
+	return &rw
+}
+
+// parseLoonScriptLineDirect parses the canonical Loon [Script] line that has no
+// leading "name =", e.g.:
+//
+//	http-response PATTERN script-path=URL, tag=NAME, requires-body=true
+//	cron "0 8 * * *" script-path=URL, tag=NAME
+//
+// Pattern is taken from the token immediately before "script-path=". For cron
+// lines the cron expression is read from the quoted segment.
+func parseLoonScriptLineDirect(line string) *ParsedRewrite {
+	rw := ParsedRewrite{Type: RewriteTypeScript}
+	if strings.HasPrefix(line, "cron") {
+		rw.ScriptType = "cron"
+		if qi := strings.Index(line, `"`); qi >= 0 {
+			if end := strings.Index(line[qi+1:], `"`); end >= 0 {
+				rw.CronExp = line[qi+1 : qi+1+end]
+			}
+		}
+	} else {
+		tokens := strings.Fields(line)
+		if len(tokens) >= 2 {
+			rw.ScriptType = tokens[0]
+		}
+	}
+	// Pattern: token before "script-path=" (http form only).
+	if rw.ScriptType != "cron" {
+		tokens := strings.Fields(line)
+		for i, tok := range tokens {
+			if strings.HasPrefix(tok, "script-path=") && i-1 >= 0 {
+				rw.Pattern = tokens[i-1]
+				break
+			}
+		}
+	}
+	// Options live after the first "script-path=" occurrence.
+	optStart := strings.Index(line, "script-path=")
+	configStr := line
+	if optStart >= 0 {
+		configStr = line[optStart:]
+	}
+	for _, cp := range strings.Split(configStr, ",") {
+		cp = strings.TrimSpace(cp)
+		kv := strings.SplitN(cp, "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(kv[0])
+		val := strings.TrimSpace(kv[1])
+		switch key {
+		case "script-path":
+			rw.ScriptPath = val
+		case "timeout":
+			fmt.Sscanf(val, "%d", &rw.Timeout)
+		case "requires-body":
+			rw.RequiresBody = val == "1" || val == "true"
+		case "argument":
+			rw.Arguments = val
+		case "tag":
+			rw.Tag = val
+			rw.Replacement = val
+		case "img-url":
+			rw.ImgURL = val
+		case "enable", "enabled":
+			rw.Enable = val == "true"
+		}
+	}
 	if rw.Timeout == 0 {
 		rw.Timeout = 30
 	}

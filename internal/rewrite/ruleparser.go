@@ -1,3 +1,9 @@
+// Input: fmt, log, regexp, strings
+// Output: type RuleFlags, type ruleNode, func ModifyRule(), 逻辑规则（AND/OR/NOT）的词法/语法解析与重生
+// Pos: 业务层-逻辑规则改写，解析 Surge 逻辑规则树并按 flags 重生成
+//
+// 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
+
 package rewrite
 
 import (

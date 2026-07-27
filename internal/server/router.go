@@ -1,3 +1,9 @@
+// Input: net/http, strings, internal/config
+// Output: func (Server) setupRoutes(), func (Server) dispatchHandler(), func (Server) fileHandler(), func buildScriptHubURL(), func extractReqFromURL(), func extractURLArg()
+// Pos: API层-路由分发，全捕获后按 URL 手动分发到重写/规则解析器
+//
+// 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
+
 // router.go 实现 Script Hub 的 URL 路由分发。
 // 使用全捕获处理器配合手动 URL 分发，因为 URL 中可能包含 "://" 字符，
 // chi 的模式匹配器无法正确处理。
@@ -18,11 +24,15 @@ func (s *Server) setupRoutes() {
 
 // dispatchHandler 实现与 JS 版 scriptMap.js 相同的路由逻辑：
 //   - /                  → 转换页面
+//   - /healthz           → 健康检查
 //   - /file/_start_/...   → 重写/规则解析器
 func (s *Server) dispatchHandler(w http.ResponseWriter, r *http.Request) {
 	uri := r.URL.RequestURI()
 
 	switch {
+	case uri == "/healthz":
+		w.WriteHeader(http.StatusOK)
+
 	case uri == "/":
 		s.scriptHubHandler(w, r)
 

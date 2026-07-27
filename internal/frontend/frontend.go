@@ -1,3 +1,9 @@
+// Input: embed, strings
+// Output: func GenerateHTML()
+// Pos: UI层-前端页面，内嵌 index.html 并注入 baseURL 生成转换页面
+//
+// 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
+
 // Package frontend provides the minimal conversion UI.
 package frontend
 

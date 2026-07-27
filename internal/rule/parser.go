@@ -1,3 +1,9 @@
+// Input: context, fmt, log, regexp, strings, internal/config, internal/httpclient, internal/types, internal/util
+// Output: type ParseInput, type ParseOutput, type Parser, func NewParser(), func (Parser) Parse(), 规则解析与格式化函数
+// Pos: 业务层-规则集转换引擎，解析各平台规则集并转换为目标平台格式
+//
+// 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
+
 // Package rule 实现规则集解析与转换引擎。
 // 将各平台规则集格式解析为统一中间表示，再转换为目标平台格式。
 // 对应 JS 版 rule-parser.js 的完整功能。
@@ -332,7 +338,9 @@ func (p *Parser) formatOutput(rules []ruleLine, targetApp string) string {
 	target := strings.ToLower(targetApp)
 	isStash := strings.Contains(target, "stash")
 	isLoon := strings.Contains(target, "loon")
-	isSurge := strings.Contains(target, "surge") || strings.Contains(target, "shadowrocket")
+	// Egern / LanceX are Surge-compatible clients and share the Surge rule format.
+	isSurge := strings.Contains(target, "surge") || strings.Contains(target, "shadowrocket") ||
+		strings.Contains(target, "egern") || strings.Contains(target, "lancex")
 	isShadowrocket := strings.Contains(target, "shadowrocket")
 	isDomainSet := strings.Contains(target, "domain-set")
 	isDomainSet2 := strings.HasSuffix(target, "2")

@@ -1,32 +1,376 @@
 <!doctype html>
 <html lang="zh-CN">
+
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" type="image/png" href="https://raw.githubusercontent.com/Script-Hub-Org/Script-Hub/main/assets/icon.png">
 <title>Script Hub</title>
 <style>
-:root{color-scheme:light dark;font:16px system-ui,sans-serif}body{max-width:760px;margin:40px auto;padding:0 16px}label{display:block;margin:16px 0 6px}select,input,textarea,button{box-sizing:border-box;width:100%;font:inherit;padding:10px}textarea{min-height:180px;font-family:ui-monospace,monospace}button{margin-top:16px;cursor:pointer}small{opacity:.7}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}#status{min-height:1.5em;color:#b44}@media(max-width:540px){.row{grid-template-columns:1fr}}
+/* 基于上游 Script-Hub 的 Simple.css 主题变量 */
+:root {
+  --sans-font: -apple-system, BlinkMacSystemFont, "Avenir Next", Avenir,
+    "Nimbus Sans L", Roboto, "Noto Sans", "Segoe UI", Arial, Helvetica,
+    "Helvetica Neue", sans-serif;
+  --mono-font: Consolas, Menlo, Monaco, "Andale Mono", "Ubuntu Mono", monospace;
+  --standard-border-radius: 13px;
+  --bg: #eef1f5;
+  --kbg: #6e8ed712;
+  --accent-bg: #d8e3f17a;
+  --text: #484848;
+  --text-light: #585858;
+  --border: #dadce7;
+  --accent: #5c88c9;
+  --selectc: #e4e4ee85;
+  --inputs: #d2d7e2b0;
+  --error: #a64242;
+  --disabled: #efefef;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1f222a;
+    --kbg: #b3c5e114;
+    --accent-bg: #2a32469c;
+    --text: #d3cdcd;
+    --text-light: #ababab;
+    --border: #414146;
+    --accent: #9093ce;
+    --selectc: #1f1f21;
+    --inputs: #41414657;
+    --error: #e69b9b;
+    --disabled: #2a2a2f;
+  }
+}
+* { box-sizing: border-box; }
+html { font-family: var(--sans-font); scroll-behavior: smooth; }
+body {
+  display: grid;
+  grid-template-columns: 1fr min(45rem, 92%) 1fr;
+  margin: 0;
+  color: var(--text);
+  background: var(--bg);
+  font-size: 1.05rem;
+  line-height: 1.5;
+}
+body > * { grid-column: 2; }
+h1 { font-size: 3rem; line-height: 1.1; margin: 1rem auto; }
+h2 { font-size: 1.25rem; margin: 0 0 0.5rem; line-height: 1.2; }
+p { max-width: 40rem; margin: 1rem auto; }
+a { color: var(--accent); }
+code { font-family: var(--mono-font); background: var(--kbg); border-radius: 5px; padding: 0.1rem 0.3rem; font-size: 0.92em; }
+
+body > header {
+  grid-column: 1 / -1;
+  background-color: var(--accent-bg);
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+  padding: 0 0.5rem 2rem;
+}
+body > header h1 { margin-top: 40px; }
+header > nav a, header > nav a:visited {
+  margin: 0 0.5rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--standard-border-radius);
+  color: var(--text);
+  display: inline-block;
+  padding: 0.1rem 1rem;
+  text-decoration: none;
+}
+
+main { padding-top: 1.5rem; }
+
+textarea, input[type="url"] {
+  width: 100%;
+  font-family: var(--mono-font);
+  font-size: 0.92rem;
+  background: var(--inputs);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--standard-border-radius);
+  padding: 0.75rem;
+  box-shadow: inset 0 1px 2px #0000000b;
+}
+textarea { min-height: 110px; max-height: 500px; overflow-y: auto; resize: vertical; line-height: 1.45; }
+input[type="url"] { font-family: var(--sans-font); }
+input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+aside, details, pre, progress {
+  background-color: var(--accent-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--standard-border-radius);
+  margin-bottom: 1rem;
+}
+details { padding: 0.5rem 1rem; }
+details > summary { cursor: pointer; font-weight: 600; }
+
+/* 胶囊式单选标签（隐藏原生圆点，点击整片胶囊切换） */
+input[type="radio"] {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  clip: rect(0 0 0 0); clip-path: inset(50%);
+  overflow: hidden; white-space: nowrap;
+}
+input[type="radio"]:focus-visible + .radio-label {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+input[type="radio"]:disabled + .radio-label { opacity: 0.5; cursor: not-allowed; }
+.radio-label {
+  display: inline-block;
+  margin: 0.2rem 0.4rem 0.2rem 0;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-light);
+  font-size: 0.92rem;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.radio-label:hover { border-color: var(--accent); color: var(--text); }
+input[type="radio"]:checked + .radio-label {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* 来源/目标 两栏容器 */
+.flex-container {
+  background: var(--selectc);
+  display: flex;
+  flex-wrap: wrap;
+  border-radius: 15px;
+  padding: 0.75rem 1rem;
+  margin-top: 0.5rem;
+  gap: 1.5rem;
+}
+.flex-container > div { flex: 1 1 220px; }
+.flex-container code { display: block; margin-bottom: 0.35rem; background: none; padding: 0; }
+.mode-group[hidden], .target-group[hidden] { display: none; }
+
+/* 按钮 */
+button {
+  border: none;
+  border-radius: var(--standard-border-radius);
+  background: var(--accent);
+  font-size: 1rem;
+  color: var(--bg);
+  padding: 0.7rem 0.9rem;
+  margin: 0.5rem 0;
+  font-family: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { filter: brightness(1.15); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+#status { min-height: 1.4em; margin: 0.5rem 0; color: var(--text-light); font-size: 0.92rem; }
+#status.error { color: var(--error); }
+
+body > footer {
+  margin-top: 3rem;
+  padding: 2rem 1rem 1.5rem;
+  color: var(--text-light);
+  font-size: 0.9rem;
+  text-align: center;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 720px) {
+  h1 { font-size: 2.5rem; }
+  .flex-container > div { flex-basis: 100%; }
+}
 </style>
 </head>
-<body>
-<h1>Script Hub</h1>
-<p>规则集与重写配置格式转换。脚本 URL 保留原样，不转换 JavaScript 运行时。</p>
-<div class="row">
-<div><label for="source">来源格式</label><select id="source"><option value="all-module">自动识别重写</option><option value="qx-rewrite">QX Rewrite</option><option value="surge-module">Surge Module</option><option value="loon-plugin">Loon Plugin</option><option value="rule-set">规则集</option></select></div>
-<div><label for="target">目标格式</label><select id="target"><option value="surge-module">Surge Module</option><option value="loon-plugin">Loon Plugin</option><option value="stash-stoverride">Stash Override</option><option value="shadowrocket-module">Shadowrocket Module</option></select></div>
-</div>
-<label for="url">远程 URL <small>与粘贴内容二选一</small></label><input id="url" type="url" placeholder="https://example.com/rules.conf">
-<label for="input">粘贴内容</label><textarea id="input" placeholder="在此粘贴规则或重写配置"></textarea>
-<button id="convert">转换</button><p id="status" role="status"></p>
-<label for="output">输出</label><textarea id="output" readonly></textarea>
-<button id="copy" type="button">复制输出</button>
+
+<body style="margin-bottom: 80px;">
+
+<header>
+  <a href="https://github.com/Script-Hub-Org/Script-Hub"><h1 style="margin-bottom: 0;">Script Hub</h1></a>
+  <p>重写 &amp; 规则集转换</p>
+</header>
+
+<main>
+  <div id="app">
+    <div style="margin-top: 30px;">
+      <span style="position: relative; top: -9px;" id="input-types">
+        <input type="radio" id="input-type-remote-url" name="input-mode" value="url" checked>
+        <label for="input-type-remote-url" class="radio-label">来源链接</label>
+        <input type="radio" id="input-type-local-text" name="input-mode" value="text">
+        <label for="input-type-local-text" class="radio-label">本地文本内容</label>
+      </span>
+      <div id="url-content" class="mode-group" style="margin-top: 4px;">
+        <input id="src" type="url" inputmode="url" placeholder="请填写来源 URL 链接(多个 URL 用 😂 连接)">
+      </div>
+      <textarea id="text-content" class="mode-group" hidden placeholder="请填写本地文件内容"></textarea>
+    </div>
+
+    <div class="flex-container">
+      <div>
+        <code>&nbsp;来源类型: </code>
+        <div id="source-types">
+          <input type="radio" id="type-all-module" name="source" value="all-module" checked>
+          <label for="type-all-module" class="radio-label">自动识别</label>
+          <input type="radio" id="type-qx-rewrite" name="source" value="qx-rewrite">
+          <label for="type-qx-rewrite" class="radio-label">QX 重写</label>
+          <input type="radio" id="type-surge-module" name="source" value="surge-module">
+          <label for="type-surge-module" class="radio-label">Surge 模块</label>
+          <input type="radio" id="type-loon-plugin" name="source" value="loon-plugin">
+          <label for="type-loon-plugin" class="radio-label">Loon 插件</label>
+          <input type="radio" id="type-rule-set" name="source" value="rule-set">
+          <label for="type-rule-set" class="radio-label">规则集</label>
+        </div>
+      </div>
+
+      <div>
+        <code>&nbsp;目标类型: </code>
+        <div id="module-targets" class="target-group">
+          <input type="radio" id="target-surge-module" name="target" value="surge-module" checked>
+          <label for="target-surge-module" class="radio-label">Surge/Egern 模块</label>
+          <input type="radio" id="target-egern-module" name="target" value="egern-module">
+          <label for="target-egern-module" class="radio-label">Egern 模块</label>
+          <input type="radio" id="target-lancex-module" name="target" value="lancex-module">
+          <label for="target-lancex-module" class="radio-label">LanceX 模块</label>
+          <input type="radio" id="target-loon-plugin" name="target" value="loon-plugin">
+          <label for="target-loon-plugin" class="radio-label">Loon 插件</label>
+          <input type="radio" id="target-stash-stoverride" name="target" value="stash-stoverride">
+          <label for="target-stash-stoverride" class="radio-label">Stash 覆写</label>
+          <input type="radio" id="target-shadowrocket-module" name="target" value="shadowrocket-module">
+          <label for="target-shadowrocket-module" class="radio-label">Shadowrocket 模块</label>
+          <input type="radio" id="target-qx-rewrite" name="target" value="qx-rewrite">
+          <label for="target-qx-rewrite" class="radio-label">QX 重写</label>
+        </div>
+        <div id="rule-targets" class="target-group" hidden>
+          <input type="radio" id="target-surge-rule-set" name="target" value="surge-rule-set">
+          <label for="target-surge-rule-set" class="radio-label">规则集(Surge)</label>
+          <input type="radio" id="target-loon-rule-set" name="target" value="loon-rule-set">
+          <label for="target-loon-rule-set" class="radio-label">规则集(Loon)</label>
+          <input type="radio" id="target-stash-rule-set" name="target" value="stash-rule-set">
+          <label for="target-stash-rule-set" class="radio-label">规则集(Stash)</label>
+          <input type="radio" id="target-shadowrocket-rule-set" name="target" value="shadowrocket-rule-set">
+          <label for="target-shadowrocket-rule-set" class="radio-label">规则集(Shadowrocket)</label>
+          <input type="radio" id="target-egern-rule-set" name="target" value="egern-rule-set">
+          <label for="target-egern-rule-set" class="radio-label">规则集(Egern)</label>
+          <input type="radio" id="target-lancex-rule-set" name="target" value="lancex-rule-set">
+          <label for="target-lancex-rule-set" class="radio-label">规则集(LanceX)</label>
+          <input type="radio" id="target-surge-domain-set" name="target" value="surge-domain-set">
+          <label for="target-surge-domain-set" class="radio-label">域名集(Surge)</label>
+          <input type="radio" id="target-surge-domain-set2" name="target" value="surge-domain-set2">
+          <label for="target-surge-domain-set2" class="radio-label">非域名集剩余规则(Surge)</label>
+          <input type="radio" id="target-stash-domain-set" name="target" value="stash-domain-set">
+          <label for="target-stash-domain-set" class="radio-label">域名集(Stash)</label>
+          <input type="radio" id="target-stash-domain-set2" name="target" value="stash-domain-set2">
+          <label for="target-stash-domain-set2" class="radio-label">非域名集剩余规则(Stash)</label>
+        </div>
+      </div>
+    </div>
+
+    <details>
+      <summary>说明</summary>
+      <span>脚本 URL 保留原样，不转换 JavaScript 运行时。选择「规则集」来源时，目标类型会自动切换到规则集组。</span>
+    </details>
+
+    <div style="padding: 1rem; margin-top: 1rem; background-color: var(--kbg); border-radius: var(--standard-border-radius);">
+      <button id="convert" type="button">转换</button>
+      <p id="status" role="status" aria-live="polite"></p>
+      <textarea id="result" readonly placeholder="结果(请输入来源链接并选择类型)"></textarea>
+      <div>
+        <button id="copy" type="button" disabled>复制</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <p>Made With &hearts; By <a href="https://github.com/Script-Hub-Org/Script-Hub">Script Hub</a></p>
+</footer>
+
 <script>
 const base='__BASE_URL__';
-const source=document.querySelector('#source'),target=document.querySelector('#target');
-const targets={module:['surge-module','loon-plugin','stash-stoverride','shadowrocket-module'],rule:['surge-rule-set','loon-rule-set','stash-rule-set','shadowrocket-rule-set','surge-domain-set','stash-domain-set']};
-function setTargets(){const values=source.value==='rule-set'?targets.rule:targets.module;target.replaceChildren(...values.map(value=>{const o=document.createElement('option');o.value=value;o.textContent=value;return o}))}source.addEventListener('change',setTargets);
-document.querySelector('#convert').addEventListener('click',async()=>{const status=document.querySelector('#status'),output=document.querySelector('#output'),text=document.querySelector('#input').value.trim(),remote=document.querySelector('#url').value.trim();status.textContent='';output.value='';if(!text&&!remote){status.textContent='请输入 URL 或粘贴内容';return}if(remote){try{const u=new URL(remote);if(!['http:','https:'].includes(u.protocol))throw 0}catch{status.textContent='URL 必须使用 http 或 https';return}}const input=remote||'http://local.text';const q=new URLSearchParams({type:source.value,target:target.value});if(text)q.set('localtext',text);try{const r=await fetch(`${base}/file/_start_/${encodeURIComponent(input)}/_end_/?${q}`);const body=await r.text();if(!r.ok)throw new Error(body||`HTTP ${r.status}`);output.value=body}catch(e){status.textContent=e.message}});
-document.querySelector('#copy').addEventListener('click',async()=>{await navigator.clipboard.writeText(document.querySelector('#output').value);document.querySelector('#status').textContent='已复制'});
+const $ = selector => document.querySelector(selector);
+const status = $('#status'), result = $('#result'), convert = $('#convert'), copy = $('#copy');
+function setStatus(message, error = false) {
+  status.textContent = message;
+  status.classList.toggle('error', error);
+}
+function setInputMode() {
+  const textMode = document.querySelector('input[name="input-mode"]:checked').value === 'text';
+  $('#url-content').hidden = textMode;
+  $('#text-content').hidden = !textMode;
+}
+function setTargets() {
+  const rules = document.querySelector('input[name="source"]:checked').value === 'rule-set';
+  $('#module-targets').hidden = rules;
+  $('#rule-targets').hidden = !rules;
+  const group = rules ? $('#rule-targets') : $('#module-targets');
+  const first = group.querySelector('input[type="radio"]');
+  if (first) first.checked = true;
+}
+document.querySelectorAll('input[name="input-mode"]').forEach(input => input.addEventListener('change', setInputMode));
+document.querySelectorAll('input[name="source"]').forEach(input => input.addEventListener('change', setTargets));
+
+convert.addEventListener('click', async () => {
+  const textMode = document.querySelector('input[name="input-mode"]:checked').value === 'text';
+  const text = $('#text-content').value.trim();
+  const remote = $('#src').value.trim();
+  const value = textMode ? text : remote;
+  setStatus('');
+  result.value = '';
+  copy.disabled = true;
+  if (!value) {
+    setStatus(textMode ? '请填写本地文件内容' : '请填写来源 URL 链接', true);
+    return;
+  }
+  if (!textMode) {
+    try {
+      const url = new URL(remote);
+      if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+    } catch {
+      setStatus('URL 必须使用 http 或 https 协议', true);
+      return;
+    }
+  }
+  const input = textMode ? 'http://local.text' : remote;
+  const type = document.querySelector('input[name="source"]:checked').value;
+  const target = document.querySelector('input[name="target"]:checked').value;
+  const query = new URLSearchParams({ type, target });
+  if (textMode) query.set('localtext', text);
+  convert.disabled = true;
+  convert.textContent = '转换中…';
+  setStatus('正在转换…');
+  try {
+    const response = await fetch(`${base}/file/_start_/${encodeURIComponent(input)}/_end_/?${query}`);
+    const body = await response.text();
+    if (!response.ok) throw new Error(body || `HTTP ${response.status}`);
+    result.value = body;
+    copy.disabled = !body;
+    setStatus('转换完成');
+  } catch (error) {
+    setStatus(error.message || '转换失败', true);
+  } finally {
+    convert.disabled = false;
+    convert.textContent = '转换';
+  }
+});
+
+copy.addEventListener('click', async () => {
+  if (!result.value) return;
+  try {
+    await navigator.clipboard.writeText(result.value);
+    setStatus('已复制');
+  } catch {
+    setStatus('复制失败：浏览器未授予剪贴板权限', true);
+  }
+});
 </script>
+
 </body>
+
 </html>

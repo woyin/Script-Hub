@@ -1,3 +1,9 @@
+// Input: context, encoding/json, fmt, math/rand, regexp, strings, sync, internal/httpclient, internal/util
+// Output: Apply*Modification 系列函数（脚本参数/名称/超时/引擎/Cron 等修改）, ApplyIconReplacement(), CategoryForOutput(), func TakeLeadingTemplate(), dedup 工具
+// Pos: 业务层-重写参数改写，按查询参数对解析后的模块/脚本/规则/MITM 进行修改
+//
+// 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
+
 package rewrite
 
 import (
@@ -530,11 +536,15 @@ func dedupRewrites(rws []ParsedRewrite) []ParsedRewrite {
 	seen := make(map[string]bool)
 	result := make([]ParsedRewrite, 0, len(rws))
 	for _, rw := range rws {
-		key := rw.Pattern
-		if key == "" {
-			result = append(result, rw)
-			continue
-		}
+		// Match upstream rwBox dedup semantics (Rewrite-Parser.js ~line 1036): upstream
+		// only dedups URL Rewrite reject/redirect entries by pattern (rwptn), because
+		// header-rewrite / body-rewrite live in separate boxes (rwhdBox/rwbodyBox) that
+		// are either not deduped or deduped by full value. In Go's IR every rewrite kind
+		// shares module.Rewrites, so a pattern-only key would wrongly collapse distinct
+		// rules targeting the same host (e.g. header-request AND header-response AND a
+		// reject rule for the same pattern). Use type + pattern + replacement as the key
+		// so only true duplicates are dropped.
+		key := fmt.Sprintf("%d|%s|%s", rw.Type, rw.Pattern, rw.Replacement)
 		if !seen[key] {
 			seen[key] = true
 			result = append(result, rw)

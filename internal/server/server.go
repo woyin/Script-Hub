@@ -1,3 +1,9 @@
+// Input: context, net/http, github.com/go-chi/chi/v5, internal/config
+// Output: type Server, func New(), func (Server) Start(), func (Server) Shutdown()
+// Pos: API层-HTTP 服务核心，创建 chi 路由器并管理服务的启动与优雅关闭
+//
+// 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
+
 // Package server 实现 Script Hub 的 HTTP 服务层。
 // 使用 chi 路由器，提供与 JS 版 service.js / preview.js 完全对齐的路由逻辑。
 package server

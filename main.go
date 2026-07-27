@@ -1,3 +1,9 @@
+// Input: context, fmt, log, net/http, os, os/signal, syscall, time, internal/config, internal/server
+// Output: func main(), var version
+// Pos: 入口层-程序启动，加载配置并管理 HTTP 服务生命周期
+//
+// 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
+
 // Script Hub — 代理规则与脚本转换服务（Go 重写版）
 //
 // 本程序是 Script Hub 的 Go 语言重写版本，完整还原了原始 Node.js 版本的所有功能：

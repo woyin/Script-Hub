@@ -121,3 +121,20 @@ func TestParseLocalText(t *testing.T) {
 		t.Fatalf("localtext not parsed:\n%s", out.Content)
 	}
 }
+
+// Egern and LanceX are Surge-compatible clients: their rule-set output must be
+// identical to the Surge rule-set output (DOMAIN rules rendered verbatim, no
+// Stash payload: prefix, no Loon rewriting).
+func TestEgernLanceXRuleSetMatchesSurge(t *testing.T) {
+	body := "DOMAIN,test.com\nDOMAIN-SUFFIX,example.com\nIP-CIDR,1.2.3.0/24,no-resolve"
+	surgeOut := parseLocal(t, body, "surge-rule-set", nil)
+	for _, target := range []string{"egern-rule-set", "lancex-rule-set"} {
+		got := parseLocal(t, body, target, nil)
+		if got != surgeOut {
+			t.Fatalf("target %s did not match surge rule-set output.\nsurge:\n%s\ngot:\n%s", target, surgeOut, got)
+		}
+		if strings.Contains(got, "payload:") {
+			t.Fatalf("target %s rendered as Stash payload:\n%s", target, got)
+		}
+	}
+}

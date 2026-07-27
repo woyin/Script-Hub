@@ -1,3 +1,9 @@
+// Input: compress/gzip, context, fmt, io, net/http, strings
+// Output: type Client, func NewClient(), func (Client) Get/GetWithHeaders/Post/GetBytesWithHeaders(), func ParseCustomHeaders()
+// Pos: 工具层-HTTP 客户端，封装带超时、自定义头、gzip 解压的统一请求能力
+//
+// 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
+
 // Package httpclient 提供统一的 HTTP 客户端封装。
 // 支持自定义超时、自定义请求头、gzip 解压等功能，
 // 对应 JS 版 Env.js 中的 HTTP 请求方法。
