@@ -235,3 +235,125 @@ func TestParseCustomHeaders(t *testing.T) {
 		})
 	}
 }
+
+func TestGet_CorruptGzipReturnsError(t *testing.T) {
+	// 服务端声明 gzip 编码但返回损坏数据，应触发 gzip.NewReader 失败
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(200)
+		w.Write([]byte("not-valid-gzip-data"))
+	}))
+	defer srv.Close()
+	c := NewClient(5)
+	_, _, err := c.Get(context.Background(), srv.URL)
+	if err == nil {
+		t.Error("Get with corrupt gzip should return error")
+	}
+}
+
+func TestGetBytesWithHeaders_CorruptGzipReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(200)
+		w.Write([]byte("not-valid-gzip-data"))
+	}))
+	defer srv.Close()
+	c := NewClient(5)
+	_, _, _, err := c.GetBytesWithHeaders(context.Background(), srv.URL, nil)
+	if err == nil {
+		t.Error("GetBytesWithHeaders with corrupt gzip should return error")
+	}
+}
+
+func TestGetWithHeaders_InvalidURL(t *testing.T) {
+	c := NewClient(2)
+	_, _, err := c.GetWithHeaders(context.Background(), "http://invalid.invalid.invalid.", nil)
+	if err == nil {
+		t.Error("GetWithHeaders on invalid URL should return error")
+	}
+}
+
+func TestPost_InvalidURL(t *testing.T) {
+	c := NewClient(2)
+	_, _, err := c.Post(context.Background(), "http://invalid.invalid.invalid.", strings.NewReader("x"))
+	if err == nil {
+		t.Error("Post on invalid URL should return error")
+	}
+}
+
+func TestGetBytesWithHeaders_InvalidURL(t *testing.T) {
+	c := NewClient(2)
+	_, _, _, err := c.GetBytesWithHeaders(context.Background(), "http://invalid.invalid.invalid.", nil)
+	if err == nil {
+		t.Error("GetBytesWithHeaders on invalid URL should return error")
+	}
+}
+
+func TestGetBytesWithHeaders_GzipSuccess(t *testing.T) {
+	// GetBytesWithHeaders 的 gzip 解压成功路径此前未覆盖
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		gz.Write([]byte("gzipped-response"))
+		gz.Close()
+		w.WriteHeader(200)
+		w.Write(buf.Bytes())
+	}))
+	defer srv.Close()
+	c := NewClient(5)
+	data, status, headers, err := c.GetBytesWithHeaders(context.Background(), srv.URL, map[string]string{"X-A": "b"})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if status != 200 {
+		t.Errorf("status = %d", status)
+	}
+	if string(data) != "gzipped-response" {
+		t.Errorf("data = %q", string(data))
+	}
+	// Go Transport transparently decompresses and strips Content-Encoding;
+	// we assert the response header map is populated (not nil).
+	if len(headers) == 0 {
+		t.Error("response headers map should not be empty")
+	}
+}
+
+func TestGet_BodyReadError(t *testing.T) {
+	// 服务端声明 Content-Length 但提前断开连接，触发 io.ReadAll 失败
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Skip("server doesn't support hijacking")
+		}
+		conn, buf, _ := hijacker.Hijack()
+		defer conn.Close()
+		buf.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort")
+		buf.Flush()
+	}))
+	defer srv.Close()
+	c := NewClient(5)
+	_, _, err := c.Get(context.Background(), srv.URL)
+	if err == nil {
+		t.Error("Get with truncated body should return error")
+	}
+}
+
+func TestGetBytesWithHeaders_BodyReadError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Skip("server doesn't support hijacking")
+		}
+		conn, buf, _ := hijacker.Hijack()
+		defer conn.Close()
+		buf.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort")
+		buf.Flush()
+	}))
+	defer srv.Close()
+	c := NewClient(5)
+	_, _, _, err := c.GetBytesWithHeaders(context.Background(), srv.URL, nil)
+	if err == nil {
+		t.Error("GetBytesWithHeaders with truncated body should return error")
+	}
+}
