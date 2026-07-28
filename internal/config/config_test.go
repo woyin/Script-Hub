@@ -102,3 +102,25 @@ func TestConstants(t *testing.T) {
 		t.Errorf("PlatformLanceX = %q", PlatformLanceX)
 	}
 }
+
+func TestSetVersion(t *testing.T) {
+	// Save and restore the global Version.
+	old := Version
+	t.Cleanup(func() { Version = old })
+
+	// SetVersion should update the global, and LoadConfig should reflect it.
+	SetVersion("v9.9.9")
+	if Version != "v9.9.9" {
+		t.Errorf("Version = %q, want v9.9.9", Version)
+	}
+	cfg := LoadConfig()
+	if cfg.Version != "v9.9.9" {
+		t.Errorf("cfg.Version = %q, want v9.9.9", cfg.Version)
+	}
+
+	// Empty value should not overwrite the existing version.
+	SetVersion("")
+	if Version != "v9.9.9" {
+		t.Errorf("SetVersion(\"\") should be a no-op, but Version = %q", Version)
+	}
+}
