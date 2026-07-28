@@ -25,6 +25,7 @@ func (s *Server) setupRoutes() {
 // dispatchHandler 实现与 JS 版 scriptMap.js 相同的路由逻辑：
 //   - /                  → 转换页面
 //   - /healthz           → 健康检查
+//   - /version           → 返回应用版本号（纯文本）
 //   - /file/_start_/...   → 重写/规则解析器
 func (s *Server) dispatchHandler(w http.ResponseWriter, r *http.Request) {
 	uri := r.URL.RequestURI()
@@ -32,6 +33,10 @@ func (s *Server) dispatchHandler(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case uri == "/healthz":
 		w.WriteHeader(http.StatusOK)
+
+	case uri == "/version":
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write([]byte(s.cfg.Version))
 
 	case uri == "/":
 		s.scriptHubHandler(w, r)

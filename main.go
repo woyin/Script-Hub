@@ -38,6 +38,10 @@ var version = "dev"
 func main() {
 	cfg := config.LoadConfig()
 
+	// 将 ldflags 注入的版本号同步到 config 包，供 /version 端点使用
+	config.SetVersion(version)
+	cfg.Version = version
+
 	log.Printf("Script Hub %s", version)
 
 	// ── HTTP 服务模式 ──

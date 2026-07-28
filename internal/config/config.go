@@ -62,6 +62,17 @@ type Config struct {
 	Host        string // 监听地址（默认 0.0.0.0）
 	HTTPTimeout int    // HTTP 请求超时秒数（默认 20）
 	MaxBodyKB   int    // 最大响应体 KB 数（默认 600）
+	Version     string // 应用版本号（由 main 通过 ldflags 注入后调用 SetVersion 设置）
+}
+
+// Version 是全局版本号，默认 "dev"。main 包启动时通过 SetVersion 设置。
+var Version = "dev"
+
+// SetVersion 设置全局版本号，供 /version 端点输出。
+func SetVersion(v string) {
+	if v != "" {
+		Version = v
+	}
 }
 
 // LoadConfig 从环境变量加载配置，未设置的使用默认值。
@@ -75,6 +86,7 @@ func LoadConfig() *Config {
 		Host:        host,
 		HTTPTimeout: httpTimeout,
 		MaxBodyKB:   getEnvInt("PARSER_BODY_MAX", 600),
+		Version:     Version,
 	}
 }
 

@@ -49,6 +49,15 @@ fly status
 
 仓库内 `fly.toml` 使用 `breestealth-scripthub-go`、香港区域和 9100 端口。Fly.io 健康检查请求 `GET /healthz`。
 
+## 端点
+
+| 路径 | 说明 |
+|---|---|
+| `GET /` | 转换页面（Web UI） |
+| `GET /healthz` | 健康检查（返回 200） |
+| `GET /version` | 返回当前部署版本号（纯文本，如 `v2.3.0`） |
+| `GET /file/_start_/{URL_ENCODED_INPUT}/_end_/?type={SOURCE}&target={TARGET}` | 转换 API |
+
 ## 环境变量
 
 | 变量 | 默认值 | 说明 |

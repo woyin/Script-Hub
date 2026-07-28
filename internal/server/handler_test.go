@@ -54,6 +54,27 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestVersion(t *testing.T) {
+	// Set a known version, then verify /version returns it.
+	config.SetVersion("test-1.2.3")
+	ts := newTestServer(t)
+	resp, err := http.Get(ts.URL + "/version")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if strings.TrimSpace(string(body)) != "test-1.2.3" {
+		t.Errorf("body = %q, want %q", string(body), "test-1.2.3")
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("Content-Type = %q, want text/plain", ct)
+	}
+}
+
 func TestRoot_ServesHTML(t *testing.T) {
 	ts := newTestServer(t)
 	resp, err := http.Get(ts.URL + "/")
