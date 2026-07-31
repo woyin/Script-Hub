@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/script-hub-org/script-hub/internal/config"
+	"github.com/script-hub-org/script-hub/internal/metrics"
 )
 
 // parseLocal runs the parser pipeline against a local text blob and returns the
@@ -121,6 +122,27 @@ func TestParseLocalText(t *testing.T) {
 	}
 	if !strings.Contains(out.Content, "DOMAIN,test.com") {
 		t.Fatalf("localtext not parsed:\n%s", out.Content)
+	}
+}
+
+// TestParseFetchErrorCounted 验证上游 fetch 失败时 IncFetchError 被调用。
+// 指向一个不可达端口触发网络错误，确认 metrics.fetchErrors 递增。
+func TestParseFetchErrorCounted(t *testing.T) {
+	m := metrics.New()
+	p := NewParser(&config.Config{HTTPTimeout: 1})
+	p.SetMetrics(m)
+
+	// 指向未监听端口，必然 fetch 失败。
+	_, _ = p.Parse(context.Background(), ParseInput{
+		URLs:      []string{"http://127.0.0.1:1/nonexistent"},
+		TargetApp: "surge",
+		Arguments: map[string]string{},
+	})
+
+	var b strings.Builder
+	m.Render(&b)
+	if !strings.Contains(b.String(), "scripthub_fetch_errors_total 1") {
+		t.Fatalf("fetch error not counted; metrics:\n%s", b.String())
 	}
 }
 
