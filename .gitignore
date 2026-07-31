@@ -48,3 +48,10 @@ vendor/
 
 *.log
 logs/
+
+############################
+# Claude Code / AI tooling
+############################
+.agents/
+.claude/
+skills-lock.json
