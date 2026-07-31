@@ -1,11 +1,12 @@
 // Input: compress/gzip, context, fmt, io, net/http, strings
-// Output: type Client, func NewClient(), func (Client) Get/GetWithHeaders/Post/GetBytesWithHeaders(), func ParseCustomHeaders()
-// Pos: 工具层-HTTP 客户端，封装带超时、自定义头、gzip 解压的统一请求能力
+// Output: type Client, func NewClient(), func (Client) Get/GetWithHeaders(), func (Client) applyHeaders/bodyReader/readLimited/doRequest/doRequestBytes(), func ParseCustomHeaders()
+// Deps: internal/ssrf（启用时注入受控 Transport）
+// Pos: 工具层-HTTP 客户端，封装带超时、自定义头、gzip 解压、响应体上限的统一请求能力
 //
 // 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
 
 // Package httpclient 提供统一的 HTTP 客户端封装。
-// 支持自定义超时、自定义请求头、gzip 解压等功能，
+// 支持自定义超时、自定义请求头、gzip 解压、响应体大小上限等功能，
 // 对应 JS 版 Env.js 中的 HTTP 请求方法。
 package httpclient
 
@@ -17,22 +18,42 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/script-hub-org/script-hub/internal/ssrf"
 )
+
+// 默认响应体上限（KB），仅在 NewClient 未显式指定时使用。
+const defaultMaxBodyKB = 600
 
 // Client 是带有可配置超时和自定义头的 HTTP 客户端。
 type Client struct {
-	client  *http.Client
-	timeout time.Duration
-	headers map[string]string // 默认请求头
+	client    *http.Client
+	timeout   time.Duration
+	maxBodyKB int               // 响应体最大字节数（KB），超过则中止读取并报错
+	headers   map[string]string // 默认请求头
 }
 
 // NewClient 创建带有指定超时（秒）的 HTTP 客户端。
-func NewClient(timeoutSec int) *Client {
+// maxBodyKB 限制单次响应体最大字节数（按 KB 计），<=0 时使用默认值。
+//
+// 当 ssrf.Enabled=true 时，使用内置 SSRF 校验的 Transport：
+// DNS 解析、IP 校验与实际 TCP 连接在 DialContext 阶段原子完成，
+// 消除"先检查再连接"的 DNS rebinding TOCTOU 窗口。
+func NewClient(timeoutSec int, maxBodyKB int) *Client {
+	if maxBodyKB <= 0 {
+		maxBodyKB = defaultMaxBodyKB
+	}
+	hc := &http.Client{
+		Timeout: time.Duration(timeoutSec) * time.Second,
+	}
+	// SSRF 启用时注入受控 Transport；校验发生在拨号阶段。
+	if ssrf.Enabled {
+		hc.Transport = ssrf.NewTransport()
+	}
 	return &Client{
-		client: &http.Client{
-			Timeout: time.Duration(timeoutSec) * time.Second,
-		},
-		timeout: time.Duration(timeoutSec) * time.Second,
+		client:    hc,
+		timeout:   time.Duration(timeoutSec) * time.Second,
+		maxBodyKB: maxBodyKB,
 		headers: map[string]string{
 			"User-Agent": "script-hub/1.0.0",
 		},
@@ -50,9 +71,7 @@ func (c *Client) Get(ctx context.Context, url string) (string, int, error) {
 	if err != nil {
 		return "", 0, fmt.Errorf("创建 GET 请求失败: %w", err)
 	}
-	for k, v := range c.headers {
-		req.Header.Set(k, v)
-	}
+	c.applyHeaders(req, nil)
 	return c.doRequest(req)
 }
 
@@ -62,25 +81,18 @@ func (c *Client) GetWithHeaders(ctx context.Context, url string, headers map[str
 	if err != nil {
 		return "", 0, fmt.Errorf("创建 GET 请求失败: %w", err)
 	}
-	for k, v := range c.headers {
-		req.Header.Set(k, v)
-	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
+	c.applyHeaders(req, headers)
 	return c.doRequest(req)
 }
 
-// Post 执行带自定义头的 HTTP POST 请求。
-func (c *Client) Post(ctx context.Context, url string, body io.Reader) (string, int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
-	if err != nil {
-		return "", 0, fmt.Errorf("创建 POST 请求失败: %w", err)
-	}
+// applyHeaders 将默认头与本次额外头合并写入请求；额外头同名时覆盖默认头。
+func (c *Client) applyHeaders(req *http.Request, extra map[string]string) {
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
 	}
-	return c.doRequest(req)
+	for k, v := range extra {
+		req.Header.Set(k, v)
+	}
 }
 
 // doRequest 执行 HTTP 请求并返回字符串响应体。
@@ -92,51 +104,6 @@ func (c *Client) doRequest(req *http.Request) (string, int, error) {
 	return string(bodyBytes), status, nil
 }
 
-// GetBytesWithHeaders 执行 HTTP GET 请求，返回原始字节、状态码和响应头。
-func (c *Client) GetBytesWithHeaders(ctx context.Context, url string, headers map[string]string) ([]byte, int, map[string]string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, 0, nil, fmt.Errorf("创建 GET 请求失败: %w", err)
-	}
-	for k, v := range c.headers {
-		req.Header.Set(k, v)
-	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, 0, nil, fmt.Errorf("执行请求失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// 自动解压 gzip 响应
-	var reader io.Reader = resp.Body
-	if resp.Header.Get("Content-Encoding") == "gzip" {
-		gzReader, err := gzip.NewReader(resp.Body)
-		if err != nil {
-			return nil, resp.StatusCode, nil, fmt.Errorf("创建 gzip 读取器失败: %w", err)
-		}
-		defer gzReader.Close()
-		reader = gzReader
-	}
-
-	bodyBytes, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, resp.StatusCode, nil, fmt.Errorf("读取响应体失败: %w", err)
-	}
-
-	// 提取响应头（仅取每个头的第一个值）
-	respHeaders := make(map[string]string)
-	for k, v := range resp.Header {
-		if len(v) > 0 {
-			respHeaders[k] = v[0]
-		}
-	}
-	return bodyBytes, resp.StatusCode, respHeaders, nil
-}
-
 // doRequestBytes 执行 HTTP 请求并返回字节响应体。
 func (c *Client) doRequestBytes(req *http.Request) ([]byte, int, error) {
 	resp, err := c.client.Do(req)
@@ -145,22 +112,48 @@ func (c *Client) doRequestBytes(req *http.Request) ([]byte, int, error) {
 	}
 	defer resp.Body.Close()
 
-	// 自动解压 gzip 响应
-	var reader io.Reader = resp.Body
+	reader, cleanup, err := c.bodyReader(resp)
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	bodyBytes, err := c.readLimited(reader)
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return bodyBytes, resp.StatusCode, nil
+}
+
+// bodyReader 根据 Content-Encoding 选择合适的 reader。
+// 返回的 cleanup（非 nil 时）用于关闭 gzip.Reader 等需要显式释放的资源。
+func (c *Client) bodyReader(resp *http.Response) (io.Reader, func(), error) {
 	if resp.Header.Get("Content-Encoding") == "gzip" {
 		gzReader, err := gzip.NewReader(resp.Body)
 		if err != nil {
-			return nil, resp.StatusCode, fmt.Errorf("创建 gzip 读取器失败: %w", err)
+			return nil, nil, fmt.Errorf("创建 gzip 读取器失败: %w", err)
 		}
-		defer gzReader.Close()
-		reader = gzReader
+		return gzReader, func() { gzReader.Close() }, nil
 	}
+	return resp.Body, nil, nil
+}
 
-	bodyBytes, err := io.ReadAll(reader)
+// readLimited 读取 reader 内容，但最多读取 maxBodyKB*1024 字节。
+// 超过上限时返回错误，避免上游恶意大响应导致 OOM。
+func (c *Client) readLimited(reader io.Reader) ([]byte, error) {
+	limit := int64(c.maxBodyKB) * 1024
+	// 多读 1 字节用于判断是否越限
+	lr := io.LimitReader(reader, limit+1)
+	buf, err := io.ReadAll(lr)
 	if err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("读取响应体失败: %w", err)
+		return nil, fmt.Errorf("读取响应体失败: %w", err)
 	}
-	return bodyBytes, resp.StatusCode, nil
+	if int64(len(buf)) > limit {
+		return nil, fmt.Errorf("响应体超过上限 %dKB", c.maxBodyKB)
+	}
+	return buf, nil
 }
 
 // ParseCustomHeaders 从查询参数格式的字符串解析自定义请求头。
