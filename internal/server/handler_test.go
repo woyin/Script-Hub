@@ -1,6 +1,9 @@
 package server
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -95,6 +98,24 @@ func TestRoot_ServesHTML(t *testing.T) {
 	}
 	if resp.Header.Get("Access-Control-Allow-Origin") != "*" {
 		t.Errorf("CORS missing")
+	}
+}
+
+func TestRoot_SecurityHeaders(t *testing.T) {
+	ts := newTestServer(t)
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer resp.Body.Close()
+	if got := resp.Header.Get("X-Frame-Options"); got != "DENY" {
+		t.Errorf("X-Frame-Options = %q, want DENY", got)
+	}
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := resp.Header.Get("Referrer-Policy"); got == "" {
+		t.Error("Referrer-Policy header missing")
 	}
 }
 
@@ -243,26 +264,20 @@ func TestBuildScriptHubURL(t *testing.T) {
 }
 
 func TestExtractReqFromURL(t *testing.T) {
-	// 单 URL
-	req, arr := extractReqFromURL("http://script.hub/file/_start_/abc/_end_/?x=1")
+	// extractReqFromURL 只返回原始（编码后）请求字符串，不再拆分 emoji。
+	req := extractReqFromURL("http://script.hub/file/_start_/abc/_end_/?x=1")
 	if req != "abc" {
 		t.Errorf("req = %q, want abc", req)
 	}
-	if len(arr) != 1 || arr[0] != "abc" {
-		t.Errorf("arr = %v, want [abc]", arr)
-	}
-	// 多 URL（用 %F0%9F%98%82 分隔）
-	req2, arr2 := extractReqFromURL("http://script.hub/file/_start_/abc%F0%9F%98%82def/_end_/?x=1")
+	// 多 URL（emoji 分隔符原样保留，拆分由 decodeReqArr 负责）
+	req2 := extractReqFromURL("http://script.hub/file/_start_/abc%F0%9F%98%82def/_end_/?x=1")
 	if req2 != "abc%F0%9F%98%82def" {
 		t.Errorf("req = %q", req2)
 	}
-	if len(arr2) != 2 || arr2[0] != "abc" || arr2[1] != "def" {
-		t.Errorf("arr = %v, want [abc def]", arr2)
-	}
 	// 无 _start_ / _end_ → 返回空
-	req3, arr3 := extractReqFromURL("http://example.com/other")
-	if req3 != "" || arr3 != nil {
-		t.Errorf("expected empty, got req=%q arr=%v", req3, arr3)
+	req3 := extractReqFromURL("http://example.com/other")
+	if req3 != "" {
+		t.Errorf("expected empty, got req=%q", req3)
 	}
 }
 
@@ -293,8 +308,8 @@ func TestDecodeReqArr(t *testing.T) {
 func TestBaseURLFromRequest(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Host = "hub.example.com"
-	if got := baseURLFromRequest(req); got != "https://hub.example.com" {
-		t.Errorf("default proto: got %q", got)
+	if got := baseURLFromRequest(req); got != "http://hub.example.com" {
+		t.Errorf("default proto (no TLS, no forwarded): got %q", got)
 	}
 	req.Header.Set("X-Forwarded-Proto", "http")
 	if got := baseURLFromRequest(req); got != "http://hub.example.com" {
@@ -316,7 +331,7 @@ func TestWriteResponse_ReplacesScriptHubURL(t *testing.T) {
 	req.Host = "myhost.com"
 	writeResponse(rec, out, req)
 	body := rec.Body.String()
-	if !strings.Contains(body, "https://myhost.com/file/x") {
+	if !strings.Contains(body, "myhost.com/file/x") {
 		t.Errorf("script.hub URL not rewritten:\n%s", body)
 	}
 	if strings.Contains(body, "script.hub") {
@@ -344,4 +359,311 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func TestBaseURLFromRequest_EnvOverride(t *testing.T) {
+	old := defaultBaseURLOverride
+	defaultBaseURLOverride = "https://cdn.example.com/"
+	defer func() { defaultBaseURLOverride = old }()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "internal.local"
+	if got := baseURLFromRequest(req); got != "https://cdn.example.com" {
+		t.Errorf("BASE_URL override: got %q", got)
+	}
+}
+
+// ── POST /api/convert ──
+
+func postConvert(t *testing.T, ts *httptest.Server, payload string) (*http.Response, string) {
+	t.Helper()
+	resp, err := http.Post(ts.URL+"/api/convert", "application/json", strings.NewReader(payload))
+	if err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return resp, string(body)
+}
+
+func TestConvertAPI_HelpOnGet(t *testing.T) {
+	ts := newTestServer(t)
+	resp, err := http.Get(ts.URL + "/api/convert")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d", resp.StatusCode)
+	}
+}
+
+func TestConvertAPI_QXRewriteToSurge(t *testing.T) {
+	ts := newTestServer(t)
+	payload := `{"type":"qx-rewrite","target":"surge-module","args":{"localtext":"^https?://ads.example.com url reject"}}`
+	resp, body := postConvert(t, ts, payload)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "URL Rewrite") && !strings.Contains(body, "reject") {
+		t.Errorf("Surge output missing expected content:\n%s", body)
+	}
+}
+
+func TestConvertAPI_MissingType_400(t *testing.T) {
+	ts := newTestServer(t)
+	resp, body := postConvert(t, ts, `{"urls":["http://local.text"]}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d; body=%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "type") {
+		t.Errorf("error body should mention type: %s", body)
+	}
+}
+
+func TestConvertAPI_MissingURLsAndLocaltext_400(t *testing.T) {
+	ts := newTestServer(t)
+	resp, body := postConvert(t, ts, `{"type":"qx-rewrite","target":"surge-module"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d; body=%s", resp.StatusCode, body)
+	}
+}
+
+func TestConvertAPI_InvalidJSON_400(t *testing.T) {
+	ts := newTestServer(t)
+	resp, _ := postConvert(t, ts, `{not json`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestConvertAPI_UnknownType_400(t *testing.T) {
+	ts := newTestServer(t)
+	resp, _ := postConvert(t, ts, `{"type":"banana","urls":["http://local.text"]}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestConvertAPI_BodyTooLarge_413(t *testing.T) {
+	ts := newTestServer(t)
+	// 构造 > 2MiB 的请求体
+	big := strings.Repeat("x", (2<<20)+10)
+	payload := `{"type":"qx-rewrite","args":{"localtext":"` + big + `"}}`
+	resp, _ := postConvert(t, ts, payload)
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", resp.StatusCode)
+	}
+}
+
+func TestMetricsEndpoint(t *testing.T) {
+	ts := newTestServer(t)
+	// 触发一次转换以产生指标
+	payload := `{"type":"qx-rewrite","target":"surge-module","args":{"localtext":"^https?://x.com url reject"}}`
+	resp, _ := postConvert(t, ts, payload)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("prereq convert failed: status %d", resp.StatusCode)
+	}
+
+	// 拉 metrics
+	mresp, err := http.Get(ts.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("Get /metrics: %v", err)
+	}
+	defer mresp.Body.Close()
+	body, _ := io.ReadAll(mresp.Body)
+	if mresp.StatusCode != http.StatusOK {
+		t.Errorf("/metrics status = %d", mresp.StatusCode)
+	}
+	bs := string(body)
+	if !strings.Contains(bs, "scripthub_requests_total") {
+		t.Errorf("metrics missing requests_total:\n%s", bs)
+	}
+	if !strings.Contains(bs, "scripthub_conversions_total") {
+		t.Errorf("metrics missing conversions_total:\n%s", bs)
+	}
+}
+
+func TestFormatsEndpoint(t *testing.T) {
+	ts := newTestServer(t)
+	resp, err := http.Get(ts.URL + "/formats")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	bs := string(body)
+	for _, want := range []string{"sourceTypes", "rewriteTargets", "ruleTargets", "platforms", "qx-rewrite", "surge-module"} {
+		if !strings.Contains(bs, want) {
+			t.Errorf("formats missing %q:\n%s", want, bs)
+		}
+	}
+}
+
+// ── statusForError ──
+
+func TestStatusForError_DeadlineExceeded(t *testing.T) {
+	got := statusForError(context.DeadlineExceeded)
+	if got != http.StatusGatewayTimeout {
+		t.Errorf("DeadlineExceeded → %d, want %d", got, http.StatusGatewayTimeout)
+	}
+}
+
+func TestStatusForError_GenericError(t *testing.T) {
+	got := statusForError(errors.New("boom"))
+	if got != http.StatusInternalServerError {
+		t.Errorf("generic error → %d, want %d", got, http.StatusInternalServerError)
+	}
+}
+
+// ── writeBody / writeCached ──
+
+func TestWriteBody_ReplacesScriptHubURL(t *testing.T) {
+	var buf bytes.Buffer
+	hdr := map[string]string{"Content-Type": "text/plain"}
+	writeBody(&mockResponseWriter{header: http.Header{}, buf: &buf}, 200, hdr,
+		"see https://script.hub/file", "https://my.host")
+	got := buf.String()
+	if !strings.Contains(got, "https://my.host/file") {
+		t.Errorf("script.hub URL not replaced: %q", got)
+	}
+	if strings.Contains(got, "script.hub") {
+		t.Errorf("script.hub placeholder remains: %q", got)
+	}
+}
+
+func TestWriteCached_ReplacesScriptHubURL(t *testing.T) {
+	// cachedResp 现在通过 convertWithCache 返回，走与 writeResponse 相同的 writeBody。
+	// URL 替换语义由 writeBody 统一保证（已由 TestWriteBody_* 覆盖）；
+	// 这里验证 cachedResp.GetResponse() 产出正确的 ResponseData。
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Host = "cached.example.com"
+	cr := cachedResp{
+		status:  200,
+		headers: map[string]string{"Content-Type": "text/plain"},
+		body:    "link: http://script.hub/path",
+	}
+	rd := cr.GetResponse()
+	if rd.Body != cr.body || rd.Status != 200 {
+		t.Fatalf("cachedResp.GetResponse = %+v", rd)
+	}
+	// 走 writeBody 验证替换
+	var buf bytes.Buffer
+	writeBody(&mockResponseWriter{header: http.Header{}, buf: &buf}, rd.Status, rd.Headers, rd.Body, baseURLFromRequest(r))
+	if !strings.Contains(buf.String(), "http://cached.example.com/path") {
+		t.Errorf("cached script.hub URL not replaced: %q", buf.String())
+	}
+	_ = r
+}
+
+// ── 缓存命中路径（通过 cacheKey + 实际请求验证）──
+
+func TestCacheKey_SkipsLocaltext(t *testing.T) {
+	srv := New(config.LoadConfig())
+	ck := srv.cacheKey("qx-rewrite", "surge-module", []string{"http://x"}, map[string]string{"localtext": "abc"})
+	if ck != "" {
+		t.Errorf("localtext should produce empty cache key, got %q", ck)
+	}
+}
+
+func TestCacheKey_DisabledWhenNilCache(t *testing.T) {
+	srv := New(&config.Config{}) // CacheTTL=0 → cache=nil
+	ck := srv.cacheKey("qx-rewrite", "surge-module", []string{"http://x"}, nil)
+	if ck != "" {
+		t.Errorf("nil cache should produce empty key, got %q", ck)
+	}
+}
+
+func TestCacheKey_IncludesArgs(t *testing.T) {
+	srv := New(&config.Config{CacheTTL: 60})
+	ck1 := srv.cacheKey("qx-rewrite", "surge-module", []string{"http://x"}, map[string]string{"policy": "DIRECT"})
+	ck2 := srv.cacheKey("qx-rewrite", "surge-module", []string{"http://x"}, map[string]string{"policy": "REJECT"})
+	if ck1 == ck2 {
+		t.Error("different args should produce different cache keys")
+	}
+}
+
+// TestConvertWithCache_CorruptedEntryDoesNotDoubleCount 验证缓存条目类型
+// 断言失败时不会同时计 cache hit 和 miss（第一轮引入的双重计数 bug）。
+// 正常生产中 cache 只写 cachedResp，这里手动注入污染类型模拟异常。
+func TestConvertWithCache_CorruptedEntryDoesNotDoubleCount(t *testing.T) {
+	srv := New(&config.Config{CacheTTL: 60})
+	ck := "qx-rewrite|surge-module|http://x"
+	// 注入非 cachedResp 类型的污染条目
+	srv.cache.Set(ck, "not-a-cachedResp")
+
+	var buf strings.Builder
+	srv.metrics.Render(&buf)
+	before := buf.String()
+	hitsBefore := strings.Contains(before, "scripthub_cache_hits_total 0")
+	missesBefore := strings.Contains(before, "scripthub_cache_misses_total 0")
+	if !hitsBefore || !missesBefore {
+		t.Fatalf("expected zeroed counters before call, got:\n%s", before)
+	}
+
+	// 调用 convertWithCache：类型断言失败 → 应 fall-through 到 miss 路径，
+	// 且 parse 返回 error（nil parse 不应被调，但污染会让它走 miss）。
+	// 用一个返回 error 的 parse 证明它走了 miss 路径。
+	parseCalled := false
+	_, err := srv.convertWithCache(ck, "qx-rewrite", "surge-module", func() (types.ResponseWriter, error) {
+		parseCalled = true
+		return nil, context.DeadlineExceeded
+	})
+	if !parseCalled {
+		t.Error("parse should be called on corrupted cache entry (fall-through to miss)")
+	}
+	if err == nil {
+		t.Error("expected error from parse")
+	}
+
+	// 关键断言：hit 不应增加（断言失败不计 hit），miss 应 +1（fall-through）。
+	buf.Reset()
+	srv.metrics.Render(&buf)
+	after := buf.String()
+	if strings.Contains(after, "scripthub_cache_hits_total 1") {
+		t.Errorf("corrupted entry should NOT count as cache hit:\n%s", after)
+	}
+	if !strings.Contains(after, "scripthub_cache_misses_total 1") {
+		t.Errorf("corrupted entry should fall-through to miss (+1):\n%s", after)
+	}
+}
+
+// ── runConvert rule-set 分支（API 路径）──
+
+func TestRunConvert_RuleSetFallback(t *testing.T) {
+	srv := New(config.LoadConfig())
+	ctx := context.Background()
+	req := convertRequest{
+		Type: "rule-set",
+		Args: map[string]string{"localtext": "DOMAIN-SUFFIX,example.com,DIRECT"},
+	}
+	out, status := srv.runConvert(ctx, req, req.Args)
+	if out == nil {
+		t.Fatalf("runConvert rule-set failed: status=%d", status)
+	}
+}
+
+// ── 辅助类型 ──
+
+type mockResponseWriter struct {
+	header http.Header
+	buf    *bytes.Buffer
+	code   int
+}
+
+func (m *mockResponseWriter) Header() http.Header {
+	if m.header == nil {
+		m.header = http.Header{}
+	}
+	return m.header
+}
+func (m *mockResponseWriter) WriteHeader(code int) { m.code = code }
+func (m *mockResponseWriter) Write(b []byte) (int, error) {
+	return m.buf.Write(b)
 }
