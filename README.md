@@ -56,7 +56,26 @@ fly status
 | `GET /` | 转换页面（Web UI） |
 | `GET /healthz` | 健康检查（返回 200） |
 | `GET /version` | 返回当前部署版本号（纯文本，如 `v2.3.0`） |
-| `GET /file/_start_/{URL_ENCODED_INPUT}/_end_/?type={SOURCE}&target={TARGET}` | 转换 API |
+| `POST /api/convert` | 语义化转换 API（JSON 请求体，见下文） |
+| `GET /formats` | 返回实例支持的来源/目标格式清单（JSON） |
+| `GET /metrics` | 运行时指标（Prometheus 文本格式） |
+| `GET /file/_start_/{URL_ENCODED_INPUT}/_end_/?type={SOURCE}&target={TARGET}` | 旧转换端点（兼容） |
+
+### 指标说明
+
+`/metrics` 仅统计**转换请求**（rewrite/rule 解析路径），不含 `/healthz`、`/version`、`/`、`/formats`、`/metrics` 自身等基础设施端点。`/healthz` 常被探活高频调用，计入会稀释业务转换 QPS 的信号。
+
+阅读口径：
+- `scripthub_conversions_total` 每次"产生一次转换结果"时递增（含缓存命中）。单次请求最多触发一次，故正常情况下 `conversions_total` 与 `requests_total` 同步增长。
+- 缓存开启时，singleflight 的"等待方"（并发请求复用首个请求的工作）记为 `cache_misses`——它到达时缓存尚未填充，其收益体现在上游不被打爆，而非命中率。
+
+| 指标 | 说明 |
+|---|---|
+| `scripthub_requests_total` | 转换请求总数（不含基础设施端点） |
+| `scripthub_conversion_errors_total` | 转换失败次数（parser 返回错误） |
+| `scripthub_fetch_errors_total` | 上游 HTTP fetch 失败次数 |
+| `scripthub_cache_hits_total` / `scripthub_cache_misses_total` | 缓存命中 / 未命中 |
+| `scripthub_conversions_total{source,target}` | 按 source×target 维度的转换计数 |
 
 ## 环境变量
 
@@ -64,12 +83,59 @@ fly status
 |---|---:|---|
 | `PORT` | `9100` | HTTP 端口 |
 | `HOST` | `0.0.0.0` | 监听地址 |
-| `HTTP_TIMEOUT` | `20` | 获取远程输入超时秒数 |
+| `HTTP_TIMEOUT` | `20` | 单次上游 fetch 超时秒数 |
 | `PARSER_BODY_MAX` | `600` | 解析器内容上限 KB |
+| `REQUEST_TIMEOUT` | `60` | 单次转换请求总超时秒数（覆盖多 URL 串行 fetch） |
+| `CACHE_TTL_SECONDS` | `0` | 转换结果缓存 TTL 秒数（0=禁用；仅缓存不含 localtext 的远程转换） |
+| `SSRF_BLOCK_PRIVATE` | `true` | 拦截指向私有/保留地址的上游请求（防 SSRF）。设为 `false` 时放行内网抓取 |
+
+### SSRF 防护与 DNS rebinding
+
+默认开启（`SSRF_BLOCK_PRIVATE` 默认 `true`，可设 `false` 关闭）。开启后，上游请求的拨号阶段会校验目标 IP：
+
+- DNS 解析、IP 校验与 TCP 连接在 `DialContext` 中原子完成
+- 消除"先检查再连接"的 TOCTOU 窗口，防御 DNS rebinding 攻击
+- 任一解析候选 IP 落在私有/环回/链路本地/元地址范围即拒绝整个请求
 
 ## API
 
-兼容原有规则转换 URL：
+### 语义化转换 API（推荐）
+
+```text
+POST /api/convert
+Content-Type: application/json
+```
+
+请求体：
+
+```json
+{
+  "urls":   ["https://example.com/module.sgmodule"],
+  "type":   "qx-rewrite",
+  "target": "surge-module",
+  "args":   { "localtext": "...", "policy": "DIRECT" }
+}
+```
+
+- `urls`：远程地址列表；为空时必须提供 `args.localtext`
+- `type`：来源格式，取值见下表
+- `target`：目标格式，可选
+- `args`：等价于旧端点的查询参数（`localtext`、`headers`、`policy` 等）
+
+响应：转换后的原始文本，`Content-Type` 由目标格式决定。
+
+#### 错误响应
+
+| HTTP 状态码 | 触发条件 |
+|---|---|
+| `400` | JSON 无效、缺少 `type`、`type` 取值不支持、既无 `urls` 也无 `localtext` |
+| `413` | 请求体超过 2 MiB |
+| `500` | 转换失败（错误详情仅记录在服务端日志，不返回给客户端） |
+| `504` | 请求超过 `REQUEST_TIMEOUT`（由端到端超时触发） |
+
+错误响应体为 JSON：`{"error":"<message>"}`。
+
+### 旧转换端点（兼容）
 
 ```text
 /file/_start_/{URL_ENCODED_INPUT}/_end_/?type={SOURCE}&target={TARGET}
