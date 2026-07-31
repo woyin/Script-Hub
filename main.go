@@ -30,6 +30,7 @@ import (
 
 	"github.com/script-hub-org/script-hub/internal/config"
 	"github.com/script-hub-org/script-hub/internal/server"
+	"github.com/script-hub-org/script-hub/internal/ssrf"
 )
 
 // version 通过 -ldflags -X main.version=... 注入，未设置时为 dev
@@ -41,6 +42,8 @@ func main() {
 	// 将 ldflags 注入的版本号同步到 config 包，供 /version 端点使用
 	config.SetVersion(version)
 	cfg.Version = version
+	// 同步 SSRF 开关到 ssrf 包（解析器在 fetch 前检查）
+	ssrf.Enabled = cfg.SSRFBlockPrivate
 
 	log.Printf("Script Hub %s", version)
 
