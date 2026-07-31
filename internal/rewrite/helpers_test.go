@@ -1,6 +1,7 @@
 package rewrite
 
 import (
+	"context"
 	"net/url"
 	"strings"
 	"testing"
@@ -614,27 +615,44 @@ func TestConvertToGenericFormat_Empty(t *testing.T) {
 	}
 }
 
-// ─────────── keLeeIcons (HTTP integration) ───────────
+// ─────────── lookupIconURL (map-backed cache) ───────────
 
-func TestKeLeeIcons_FetchAndCache(t *testing.T) {
-	// 由于 keLeeIconURL 是包级常量无法替换，我们测试 client==nil 分支与 cache 命中分支
-	// 1. client==nil → nil
-	if got := keLeeIcons(nil, nil); got != nil {
-		t.Errorf("nil client → want nil, got %+v", got)
-	}
-	// 2. cache 已注入，client 非 nil → 返回 cache
+func TestLookupIconURL_PreloadedMap(t *testing.T) {
+	// 注入预加载的 map，跳过网络抓取
 	keLeeIconMu.Lock()
-	old := keLeeIconCache
-	keLeeIconCache = []keLeeIcon{{Name: "x", URL: "https://y"}}
+	oldMap, oldLoaded := keLeeIconMap, keLeeIconLoaded
+	keLeeIconMap = map[string]string{"x": "https://y"}
+	keLeeIconLoaded = true
 	keLeeIconMu.Unlock()
 	defer func() {
 		keLeeIconMu.Lock()
-		keLeeIconCache = old
+		keLeeIconMap = oldMap
+		keLeeIconLoaded = oldLoaded
 		keLeeIconMu.Unlock()
 	}()
-	got := keLeeIcons(nil, newTestHTTPClient(t))
-	if len(got) != 1 || got[0].Name != "x" {
-		t.Errorf("cached lookup failed: %+v", got)
+	if got := lookupIconURL(context.Background(), newTestHTTPClient(t), "x"); got != "https://y" {
+		t.Errorf("map hit → want https://y, got %q", got)
+	}
+	if got := lookupIconURL(context.Background(), newTestHTTPClient(t), "missing"); got != "" {
+		t.Errorf("map miss → want empty, got %q", got)
+	}
+}
+
+func TestLookupIconURL_NotLoadedNilClient(t *testing.T) {
+	// 未加载 + client==nil → loadKeLeeIcons 直接返回，map 仍为 nil → 不命中
+	keLeeIconMu.Lock()
+	oldMap, oldLoaded := keLeeIconMap, keLeeIconLoaded
+	keLeeIconMap = nil
+	keLeeIconLoaded = false
+	keLeeIconMu.Unlock()
+	defer func() {
+		keLeeIconMu.Lock()
+		keLeeIconMap = oldMap
+		keLeeIconLoaded = oldLoaded
+		keLeeIconMu.Unlock()
+	}()
+	if got := lookupIconURL(context.Background(), nil, "x"); got != "" {
+		t.Errorf("nil client + unloaded → want empty, got %q", got)
 	}
 }
 
