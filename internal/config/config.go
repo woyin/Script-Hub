@@ -11,6 +11,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Platform 表示目标代理平台类型
@@ -62,7 +63,17 @@ type Config struct {
 	Host        string // 监听地址（默认 0.0.0.0）
 	HTTPTimeout int    // HTTP 请求超时秒数（默认 20）
 	MaxBodyKB   int    // 最大响应体 KB 数（默认 600）
-	Version     string // 应用版本号（由 main 通过 ldflags 注入后调用 SetVersion 设置）
+	// RequestTimeout 是单次转换请求的总超时秒数，覆盖该请求内所有上游 fetch 与解析。
+	// 默认 60，避免多 URL 串行 fetch 导致单个请求长时间占用连接。
+	RequestTimeout int
+	// CacheTTL 是转换结果缓存的存活秒数；<=0 表示禁用缓存（默认）。
+	// 仅缓存不含 localtext 的远程转换结果。
+	CacheTTL int
+	// SSRFBlockPrivate 控制是否拦截指向私有/保留地址的上游请求（默认 true）。
+	// 产品边界为公网规则集转换，默认开启以防内网/云元数据探测；
+	// 需要内网抓取的部署可显式设 SSRF_BLOCK_PRIVATE=false。
+	SSRFBlockPrivate bool
+	Version          string // 应用版本号（由 main 通过 ldflags 注入后调用 SetVersion 设置）
 }
 
 // Version 是全局版本号，默认 "dev"。main 包启动时通过 SetVersion 设置。
@@ -82,11 +93,14 @@ func LoadConfig() *Config {
 	httpTimeout := getEnvInt("HTTP_TIMEOUT", 20)
 
 	return &Config{
-		Port:        port,
-		Host:        host,
-		HTTPTimeout: httpTimeout,
-		MaxBodyKB:   getEnvInt("PARSER_BODY_MAX", 600),
-		Version:     Version,
+		Port:             port,
+		Host:             host,
+		HTTPTimeout:      httpTimeout,
+		MaxBodyKB:        getEnvInt("PARSER_BODY_MAX", 600),
+		RequestTimeout:   getEnvInt("REQUEST_TIMEOUT", 60),
+		CacheTTL:         getEnvInt("CACHE_TTL_SECONDS", 0),
+		SSRFBlockPrivate: getEnvBool("SSRF_BLOCK_PRIVATE", true),
+		Version:          Version,
 	}
 }
 
@@ -103,6 +117,20 @@ func getEnvInt(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+// getEnvBool 读取环境变量并解析为布尔值。
+// 接受 "1"、"true"、"True"（不区分大小写比较前缀）为真，其余为 fallback。
+func getEnvBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		switch strings.ToLower(v) {
+		case "1", "true", "yes", "on":
+			return true
+		case "0", "false", "no", "off":
+			return false
 		}
 	}
 	return fallback
