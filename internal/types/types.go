@@ -10,10 +10,12 @@ package types
 
 // ResponseData 是所有解析器/转换器返回的统一响应结构。
 // 对应 JS 版 $done({ response: { status, headers, body } }) 的输出格式。
+// 注意：本结构不参与 JSON 序列化——字段直接用于写 HTTP 响应，
+// 故无 json tag。
 type ResponseData struct {
-	Status  int               `json:"status"`  // HTTP 状态码
-	Headers map[string]string `json:"headers"` // 响应头
-	Body    string            `json:"body"`    // 响应体
+	Status  int    // HTTP 状态码
+	Headers map[string]string // 响应头
+	Body    string // 响应体
 }
 
 // ResponseWriter 是所有解析器输出必须实现的接口。

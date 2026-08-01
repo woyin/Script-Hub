@@ -1,0 +1,37 @@
+# ── 版本控制 ──
+.git
+.gitignore
+
+# ── CI/CD 配置（构建镜像时不需要）──
+.github
+
+# ── IDE / 编辑器 ──
+.idea
+.vscode
+*.swp
+*.swo
+
+# ── Agent / 工具链配置（与运行时无关）──
+.agents
+.claude
+skills-lock.json
+
+# ── 文档与索引（不影响二进制）──
+*.md
+FOLDER_INDEX.md
+PROJECT_INDEX.md
+
+# ── 部署配置（镜像内不需要）──
+fly.toml
+
+# ── 测试产物 ──
+*.test
+*.out
+coverage.out
+
+# ── 编译缓存 ──
+vendor/
+
+# ── OS 杂项 ──
+.DS_Store
+Thumbs.db

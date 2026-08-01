@@ -11,14 +11,22 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/script-hub-org/script-hub/internal/config"
+	"github.com/script-hub-org/script-hub/internal/util"
 )
 
 // setupRoutes 设置全捕获路由，将所有请求转发到 dispatchHandler。
 func (s *Server) setupRoutes() {
+	// 语义化 API 端点优先注册，chi 按注册顺序精确匹配优先于 /* 全捕获。
+	s.router.Post("/api/convert", s.convertAPIHandler)
+	s.router.Get("/api/convert", s.convertAPIHelpHandler)
+	s.router.Get("/formats", s.formatsHandler)
+	s.router.Get("/metrics", s.metricsHandler)
 	s.router.Get("/*", s.dispatchHandler)
 }
 
@@ -54,7 +62,17 @@ func (s *Server) dispatchHandler(w http.ResponseWriter, r *http.Request) {
 //   - qx-rewrite / surge-module / loon-plugin / all-module → Rewrite-Parser
 //   - rule-set → rule-parser
 func (s *Server) fileHandler(w http.ResponseWriter, r *http.Request) {
-	queryType := r.URL.Query().Get("type")
+	// 为整个转换请求设置端到端超时，覆盖内部所有上游 fetch 与解析。
+	// 避免多 URL 串行 fetch 时单请求总耗时 = N × HTTP_TIMEOUT。
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.cfg.RequestTimeout)*time.Second)
+	defer cancel()
+	r = r.WithContext(ctx)
+	// 与 handler 内部使用同一条解析路径（extractURLArg + util.ParseQueryString），
+	// 避免 router 与 handler 对同一请求得到不同的 type。
+	scriptURL := buildScriptHubURL(r)
+	urlArg := extractURLArg(scriptURL)
+	queryParams := util.ParseQueryString(urlArg)
+	queryType := queryParams["type"]
 	switch {
 	case queryType == config.SourceTypeQXRewrite,
 		queryType == config.SourceTypeSurgeModule,
@@ -78,24 +96,18 @@ func buildScriptHubURL(r *http.Request) string {
 }
 
 // extractReqFromURL 从 URL 中提取 /file/_start_/ 和 /_end_/ 之间的编码路径。
-// 返回编码后的请求路径和已分割的数组（当 URL 包含 😂 分隔符时）。
-func extractReqFromURL(rawURL string) (string, []string) {
+// 仅返回原始（编码后的）请求字符串；emoji 分隔符的拆分与解码统一由 decodeReqArr 负责。
+func extractReqFromURL(rawURL string) string {
 	parts := strings.SplitN(rawURL, "/file/_start_/", 2)
 	if len(parts) < 2 {
-		return "", nil
+		return ""
 	}
 	rest := parts[1]
 	endParts := strings.SplitN(rest, "/_end_/", 2)
 	if len(endParts) < 1 {
-		return "", nil
+		return ""
 	}
-	req := endParts[0]
-
-	// 😂 表情（%F0%9F%98%82）用作多 URL 分隔符
-	if strings.Contains(req, "%F0%9F%98%82") {
-		return req, strings.Split(req, "%F0%9F%98%82")
-	}
-	return req, []string{req}
+	return endParts[0]
 }
 
 // extractURLArg 提取 /_end_/ 之后的 URL 部分（查询参数区域）。

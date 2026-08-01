@@ -35,7 +35,7 @@ func clearEnv(t *testing.T, keys ...string) {
 }
 
 func TestLoadConfig_Defaults(t *testing.T) {
-	clearEnv(t, "PORT", "HOST", "HTTP_TIMEOUT", "PARSER_BODY_MAX")
+	clearEnv(t, "PORT", "HOST", "HTTP_TIMEOUT", "PARSER_BODY_MAX", "REQUEST_TIMEOUT", "SSRF_BLOCK_PRIVATE")
 	cfg := LoadConfig()
 	if cfg.Port != "9100" {
 		t.Errorf("Port = %q, want 9100", cfg.Port)
@@ -49,6 +49,31 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.MaxBodyKB != 600 {
 		t.Errorf("MaxBodyKB = %d, want 600", cfg.MaxBodyKB)
 	}
+	if cfg.RequestTimeout != 60 {
+		t.Errorf("RequestTimeout = %d, want 60", cfg.RequestTimeout)
+	}
+	// SSRF 默认开启（产品边界为公网转换，防内网/云元数据探测）
+	if !cfg.SSRFBlockPrivate {
+		t.Errorf("SSRFBlockPrivate = false, want true by default")
+	}
+}
+
+// TestLoadConfig_SSRFOVERRIDE 确认 SSRF_BLOCK_PRIVATE 可显式关闭。
+func TestLoadConfig_SSRFOverride(t *testing.T) {
+	for _, val := range []string{"0", "false", "no", "off"} {
+		setEnv(t, "SSRF_BLOCK_PRIVATE", val)
+		cfg := LoadConfig()
+		if cfg.SSRFBlockPrivate {
+			t.Errorf("SSRF_BLOCK_PRIVATE=%q → SSRFBlockPrivate = true, want false", val)
+		}
+	}
+	for _, val := range []string{"1", "true", "yes", "on"} {
+		setEnv(t, "SSRF_BLOCK_PRIVATE", val)
+		cfg := LoadConfig()
+		if !cfg.SSRFBlockPrivate {
+			t.Errorf("SSRF_BLOCK_PRIVATE=%q → SSRFBlockPrivate = false, want true", val)
+		}
+	}
 }
 
 func TestLoadConfig_Override(t *testing.T) {
@@ -56,6 +81,7 @@ func TestLoadConfig_Override(t *testing.T) {
 	setEnv(t, "HOST", "127.0.0.1")
 	setEnv(t, "HTTP_TIMEOUT", "45")
 	setEnv(t, "PARSER_BODY_MAX", "1024")
+	setEnv(t, "REQUEST_TIMEOUT", "120")
 	cfg := LoadConfig()
 	if cfg.Port != "8080" {
 		t.Errorf("Port = %q, want 8080", cfg.Port)
@@ -69,6 +95,9 @@ func TestLoadConfig_Override(t *testing.T) {
 	if cfg.MaxBodyKB != 1024 {
 		t.Errorf("MaxBodyKB = %d, want 1024", cfg.MaxBodyKB)
 	}
+	if cfg.RequestTimeout != 120 {
+		t.Errorf("RequestTimeout = %d, want 120", cfg.RequestTimeout)
+	}
 }
 
 func TestLoadConfig_InvalidInt(t *testing.T) {
@@ -80,6 +109,9 @@ func TestLoadConfig_InvalidInt(t *testing.T) {
 	}
 	if cfg.MaxBodyKB != 600 {
 		t.Errorf("MaxBodyKB empty → want fallback 600, got %d", cfg.MaxBodyKB)
+	}
+	if cfg.RequestTimeout != 60 {
+		t.Errorf("RequestTimeout default → want 60, got %d", cfg.RequestTimeout)
 	}
 }
 

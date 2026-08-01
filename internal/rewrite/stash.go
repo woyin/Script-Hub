@@ -368,3 +368,22 @@ func (p *Parser) formatStashOutput(out surgeOutput, modules []ParsedModule, args
 
 	return sb.String()
 }
+func convertSurgeHeaderRewriteToStash(line string) string {
+	isResponse := strings.HasPrefix(line, "http-response ")
+	if strings.HasPrefix(line, "http-request ") {
+		line = strings.TrimPrefix(line, "http-request ")
+	} else if strings.HasPrefix(line, "http-response ") {
+		line = strings.TrimPrefix(line, "http-response ")
+	} else {
+		// Surge-origin raw line: not convertible by the upstream transform.
+		return "# " + line
+	}
+	hdtype := " request-"
+	if isResponse {
+		hdtype = " response-"
+	}
+	if idx := strings.Index(line, " header-"); idx >= 0 {
+		line = line[:idx] + hdtype + line[idx+len(" header-"):]
+	}
+	return line
+}

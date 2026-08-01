@@ -403,9 +403,12 @@ func ApplySniPm(rules []string, sni, pm string) []string {
 // keLeeIconURL is the icon name→URL mapping source (luestr/IconResource).
 const keLeeIconURL = "https://raw.githubusercontent.com/luestr/IconResource/main/KeLee_icon.json"
 
+// keLeeIconMap 缓存 icon name→URL 映射，加载一次后用 RWMutex 保护。
+// 未加载或加载失败时为 nil，查找退化为不命中。
 var (
-	keLeeIconCache []keLeeIcon
-	keLeeIconMu    sync.Mutex
+	keLeeIconMap   map[string]string
+	keLeeIconMu    sync.RWMutex
+	keLeeIconLoaded bool
 )
 
 type keLeeIcon struct {
@@ -413,37 +416,46 @@ type keLeeIcon struct {
 	URL  string `json:"url"`
 }
 
-// keLeeIcons fetches (and caches) the KeLee icon list.
-func keLeeIcons(ctx context.Context, client *httpclient.Client) []keLeeIcon {
+// loadKeLeeIcons 抓取并缓存 KeLee icon 列表为 map（O(1) 查找）。
+// 使用写锁；失败时不设置 loaded，允许下次请求重试。
+func loadKeLeeIcons(ctx context.Context, client *httpclient.Client) {
 	if client == nil {
-		return nil
-	}
-	keLeeIconMu.Lock()
-	defer keLeeIconMu.Unlock()
-	if keLeeIconCache != nil {
-		return keLeeIconCache
+		return
 	}
 	body, status, err := client.Get(ctx, keLeeIconURL)
 	if err != nil || status != 200 {
-		return nil
+		return
 	}
 	var wrapper struct {
 		Icons []keLeeIcon `json:"icons"`
 	}
-	if json.Unmarshal([]byte(body), &wrapper) == nil {
-		keLeeIconCache = wrapper.Icons
+	if json.Unmarshal([]byte(body), &wrapper) != nil {
+		return
 	}
-	return keLeeIconCache
+	m := make(map[string]string, len(wrapper.Icons))
+	for _, ic := range wrapper.Icons {
+		m[ic.Name] = ic.URL
+	}
+	keLeeIconMu.Lock()
+	keLeeIconMap = m
+	keLeeIconLoaded = true
+	keLeeIconMu.Unlock()
 }
 
 // lookupIconURL resolves a bare icon name to a URL via the KeLee mapping.
+// 首次调用触发加载；后续调用走 map 的 O(1) 读路径（读锁）。
 func lookupIconURL(ctx context.Context, client *httpclient.Client, name string) string {
-	for _, ic := range keLeeIcons(ctx, client) {
-		if ic.Name == name {
-			return ic.URL
-		}
+	keLeeIconMu.RLock()
+	loaded := keLeeIconLoaded
+	m := keLeeIconMap
+	keLeeIconMu.RUnlock()
+	if !loaded {
+		loadKeLeeIcons(ctx, client)
+		keLeeIconMu.RLock()
+		m = keLeeIconMap
+		keLeeIconMu.RUnlock()
 	}
-	return ""
+	return m[name]
 }
 
 // randomIconURL builds a random sticker icon URL from an icon library spec
@@ -512,6 +524,10 @@ type LeadingTemplate struct {
 	Rest string // the remaining text after removing the template
 }
 
+// leadingTemplateRe 匹配行首的 {{{key}}} 模板。
+// 提升为包级变量避免在逐行解析的热路径上重复编译。
+var leadingTemplateRe = regexp.MustCompile(`^(\s*)\{\{\{([^{}]+)\}\}\}\s*(.*)$`)
+
 // TakeLeadingTemplate extracts a leading {{{key}}} template from a line,
 // mirroring JS takeLeadingTemplate:
 //
@@ -519,8 +535,7 @@ type LeadingTemplate struct {
 //
 // Returns nil if no template is found.
 func TakeLeadingTemplate(str string) *LeadingTemplate {
-	re := regexp.MustCompile(`^(\s*)\{\{\{([^{}]+)\}\}\}\s*(.*)$`)
-	m := re.FindStringSubmatch(str)
+	m := leadingTemplateRe.FindStringSubmatch(str)
 	if m == nil {
 		return nil
 	}

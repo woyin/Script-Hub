@@ -15,9 +15,11 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/script-hub-org/script-hub/internal/config"
 	"github.com/script-hub-org/script-hub/internal/httpclient"
+	"github.com/script-hub-org/script-hub/internal/metrics"
 	"github.com/script-hub-org/script-hub/internal/types"
 	"github.com/script-hub-org/script-hub/internal/util"
 )
@@ -37,8 +39,8 @@ var (
 	ruleReDropComment   = regexp.MustCompile(`^#.+`)
 
 	// 自动检测 CIDR（用于无逗号分隔的行）
-	ruleReCIDR          = regexp.MustCompile(`[0-9]/[0-9]`)
-	ruleReCIDR6         = regexp.MustCompile(`([0-9]|[a-fA-F]):([0-9]|[a-fA-F])`)
+	ruleReCIDR  = regexp.MustCompile(`[0-9]/[0-9]`)
+	ruleReCIDR6 = regexp.MustCompile(`([0-9]|[a-fA-F]):([0-9]|[a-fA-F])`)
 
 	// formatDomainSet 使用的多行正则
 	ruleReDomain        = regexp.MustCompile(`(?im)^DOMAIN,`)
@@ -46,7 +48,23 @@ var (
 	ruleReStashDomain   = regexp.MustCompile(`(?im)^  - DOMAIN,`)
 	ruleReStashDomainSF = regexp.MustCompile(`(?im)^  - DOMAIN-SUFFIX,`)
 	ruleReStripPolicy   = regexp.MustCompile(`^([^,]*),?.*`)
+
+	// hoStToHost 用于 "other"/excluded 规则的逐行显示还原，
+	// 提升为包级 var 避免在 formatOutput 的逐行循环中重复编译。
+	ruleReHoSt = regexp.MustCompile(`(?i)^HO-ST`)
 )
+
+// loonUnsupportedRuleTypes 是 Loon 不支持的规则类型集合。
+// formatLoonRule 防御性地拒绝这些类型（即使 formatOutput 通常已先经
+// isUnsupportedForTarget 过滤）。提升为包级只读 var，避免逐行分配。
+var loonUnsupportedRuleTypes = map[string]bool{
+	"DEST-PORT":    true,
+	"PROTOCOL":     true,
+	"PROCESS-NAME": true,
+	"OR":           true,
+	"AND":          true,
+	"NOT":          true,
+}
 
 // ParseInput contains the input parameters for rule parsing.
 type ParseInput struct {
@@ -73,15 +91,27 @@ func (o ParseOutput) GetResponse() types.ResponseData {
 
 // Parser handles rule set parsing and conversion.
 type Parser struct {
-	cfg    *config.Config
-	client *httpclient.Client
+	cfg     *config.Config
+	client  *httpclient.Client
+	metrics *metrics.Metrics // 注入后用于统计上游 fetch 失败；nil 时不计数（兼容测试）
 }
 
 // NewParser creates a new rule parser.
+// metrics 字段通过 SetMetrics 注入，保持签名兼容现有调用方。
 func NewParser(cfg *config.Config) *Parser {
 	return &Parser{
 		cfg:    cfg,
-		client: httpclient.NewClient(cfg.HTTPTimeout),
+		client: httpclient.NewClient(cfg.HTTPTimeout, cfg.MaxBodyKB),
+	}
+}
+
+// SetMetrics 注入运行时指标收集器。由 server.New 在构造后调用。
+func (p *Parser) SetMetrics(m *metrics.Metrics) { p.metrics = m }
+
+// incFetchError 是 nil-safe 的 fetch 失败计数。
+func (p *Parser) incFetchError() {
+	if p.metrics != nil {
+		p.metrics.IncFetchError()
 	}
 }
 
@@ -108,20 +138,35 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 		} else {
 			var bodies []string
 			reqHeaders := httpclient.ParseCustomHeaders(input.Arguments["headers"])
-			for _, u := range input.URLs {
-				decodedURL, err := decodeURL(u)
-				if err != nil {
-					decodedURL = u
-				}
-				content, status, err := p.client.GetWithHeaders(ctx, decodedURL, reqHeaders)
-				if err != nil {
-					log.Printf("rule fetch error for %s: %v", decodedURL, err)
-					continue
-				}
-				if status == 404 {
-					bodies = append(bodies, "#!error=404: Not Found")
-				} else if status == 200 {
-					bodies = append(bodies, content)
+			// 并发抓取所有 URL，按原始顺序合并结果。
+			results := make([]string, len(input.URLs))
+			var wg sync.WaitGroup
+			for i, u := range input.URLs {
+				wg.Add(1)
+				go func(idx int, rawURL string) {
+					defer wg.Done()
+					decodedURL, err := decodeURL(rawURL)
+					if err != nil {
+						decodedURL = rawURL
+					}
+					// SSRF 校验由 httpclient 的 DialContext 在拨号阶段完成（防 DNS rebinding）。
+					content, status, err := p.client.GetWithHeaders(ctx, decodedURL, reqHeaders)
+					if err != nil {
+						log.Printf("rule fetch error for %s: %v", decodedURL, err)
+						p.incFetchError()
+						return
+					}
+					if status == 404 {
+						results[idx] = "#!error=404: Not Found"
+					} else if status == 200 {
+						results[idx] = content
+					}
+				}(i, u)
+			}
+			wg.Wait()
+			for _, r := range results {
+				if r != "" {
+					bodies = append(bodies, r)
 				}
 			}
 			if len(bodies) > 0 {
@@ -540,15 +585,7 @@ func formatSurgeRule(rl ruleLine, isShadowrocket bool) string {
 // formatLoonRule formats a rule for Loon.
 func formatLoonRule(rl ruleLine) string {
 	ruleType := strings.ToUpper(rl.RuleType)
-	unsupported := map[string]bool{
-		"DEST-PORT":    true,
-		"PROTOCOL":     true,
-		"PROCESS-NAME": true,
-		"OR":           true,
-		"AND":          true,
-		"NOT":          true,
-	}
-	if unsupported[ruleType] {
+	if loonUnsupportedRuleTypes[ruleType] {
 		return ""
 	}
 
@@ -625,7 +662,7 @@ func isUnsupportedForTarget(rt string, isStash, isLoon, isSurge bool) bool {
 // hoStToHost restores HO-ST prefixes (from HOST-WILDCARD normalization) back
 // to HOST for display in "other"/excluded output, matching JS behavior.
 func hoStToHost(s string) string {
-	return regexp.MustCompile(`(?i)^HO-ST`).ReplaceAllString(s, "HOST")
+	return ruleReHoSt.ReplaceAllString(s, "HOST")
 }
 
 // Helper functions

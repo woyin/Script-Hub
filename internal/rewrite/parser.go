@@ -14,9 +14,11 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/script-hub-org/script-hub/internal/config"
 	"github.com/script-hub-org/script-hub/internal/httpclient"
+	"github.com/script-hub-org/script-hub/internal/metrics"
 	"github.com/script-hub-org/script-hub/internal/types"
 )
 
@@ -197,15 +199,27 @@ type HostInfo struct {
 
 // Parser handles rewrite rule parsing and conversion.
 type Parser struct {
-	cfg    *config.Config
-	client *httpclient.Client
+	cfg     *config.Config
+	client  *httpclient.Client
+	metrics *metrics.Metrics // 注入后用于统计上游 fetch 失败；nil 时不计数（兼容测试）
 }
 
 // NewParser creates a new rewrite parser.
+// metrics 字段通过 SetMetrics 注入，保持签名兼容现有调用方。
 func NewParser(cfg *config.Config) *Parser {
 	return &Parser{
 		cfg:    cfg,
-		client: httpclient.NewClient(cfg.HTTPTimeout),
+		client: httpclient.NewClient(cfg.HTTPTimeout, cfg.MaxBodyKB),
+	}
+}
+
+// SetMetrics 注入运行时指标收集器。由 server.New 在构造后调用。
+func (p *Parser) SetMetrics(m *metrics.Metrics) { p.metrics = m }
+
+// incFetchError 是 nil-safe 的 fetch 失败计数。
+func (p *Parser) incFetchError() {
+	if p.metrics != nil {
+		p.metrics.IncFetchError()
 	}
 }
 
@@ -220,18 +234,32 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 		} else {
 			var bodies []string
 			reqHeaders := httpclient.ParseCustomHeaders(input.Arguments["headers"])
-			for _, u := range input.URLs {
-				content, status, err := p.client.GetWithHeaders(ctx, u, reqHeaders)
-				if err != nil {
-					log.Printf("rewrite fetch error for %s: %v", u, err)
-					continue
-				}
-				if status == 404 {
-					bodies = append(bodies, "#!error=404: Not Found")
-				} else if status == 200 {
-					// Extract content from /* ... */ block comment wrapper (Rewrite-Parser.js L325)
-					extracted := extractBlockComment(content)
-					bodies = append(bodies, extracted)
+			// 并发抓取所有 URL，按原始顺序合并结果。
+			results := make([]string, len(input.URLs))
+			var wg sync.WaitGroup
+			for i, u := range input.URLs {
+				wg.Add(1)
+				go func(idx int, url string) {
+					defer wg.Done()
+					// SSRF 校验由 httpclient 的 DialContext 在拨号阶段完成（防 DNS rebinding）。
+					content, status, err := p.client.GetWithHeaders(ctx, url, reqHeaders)
+					if err != nil {
+						log.Printf("rewrite fetch error for %s: %v", url, err)
+						p.incFetchError()
+						return
+					}
+					if status == 404 {
+						results[idx] = "#!error=404: Not Found"
+					} else if status == 200 {
+						// Extract content from /* ... */ block comment wrapper (Rewrite-Parser.js L325)
+						results[idx] = extractBlockComment(content)
+					}
+				}(i, u)
+			}
+			wg.Wait()
+			for _, r := range results {
+				if r != "" {
+					bodies = append(bodies, r)
 				}
 			}
 			if len(bodies) > 0 {

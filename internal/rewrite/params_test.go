@@ -13,7 +13,7 @@ import (
 // newTestHTTPClient 返回一个短超时的真实 httpclient.Client，供需要 client!=nil 的测试使用。
 func newTestHTTPClient(t *testing.T) *httpclient.Client {
 	t.Helper()
-	return httpclient.NewClient(2)
+	return httpclient.NewClient(2, 0)
 }
 
 // ─────────── ApplyArgModification ───────────
@@ -426,20 +426,22 @@ func TestApplyIconReplacement_RandomLibrary(t *testing.T) {
 }
 
 func TestApplyIconReplacement_BareNameResolves(t *testing.T) {
-	// 注入 cache 并提供一个 dummy client（keLeeIcons 在 client!=nil 时会用 cache）
+	// 注入预加载的 map，跳过网络抓取
 	keLeeIconMu.Lock()
-	old := keLeeIconCache
-	keLeeIconCache = []keLeeIcon{{Name: "netflix", URL: "https://x/netflix.png"}}
+	oldMap, oldLoaded := keLeeIconMap, keLeeIconLoaded
+	keLeeIconMap = map[string]string{"netflix": "https://x/netflix.png"}
+	keLeeIconLoaded = true
 	keLeeIconMu.Unlock()
 	defer func() {
 		keLeeIconMu.Lock()
-		keLeeIconCache = old
+		keLeeIconMap = oldMap
+		keLeeIconLoaded = oldLoaded
 		keLeeIconMu.Unlock()
 	}()
 
 	client := newTestHTTPClient(t)
 	m := &ParsedModule{Icon: "netflix"}
-	// cache 已注入，client 非 nil → lookupIconURL 应能从 cache 命中
+	// map 已预加载 → lookupIconURL 应能命中
 	ApplyIconReplacement(context.Background(), m, nil, client, false)
 	if m.Icon != "https://x/netflix.png" {
 		t.Errorf("bare name should resolve via cache: %q", m.Icon)
