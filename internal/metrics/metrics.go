@@ -61,6 +61,11 @@ func (m *Metrics) IncCacheHit() { m.cacheHits.Add(1) }
 // IncCacheMiss 递增缓存未命中数。
 func (m *Metrics) IncCacheMiss() { m.cacheMisses.Add(1) }
 
+// maxLabelKeys 限制 conversionsByKey 的基数，防止恶意客户端传入任意
+// target 字符串导致 label 集合无限增长（Prometheus 基数爆炸 + 内存泄漏）。
+// 已知的合法 source×target 组合远少于该上限；超限后新组合归并到 "unknown"。
+const maxLabelKeys = 64
+
 // IncConversion 按 source 和 target 维度递增一次转换计数。
 // source 或 target 为空时用 "unknown" 占位，保证 label 稳定。
 //
@@ -70,8 +75,8 @@ func (m *Metrics) IncCacheMiss() { m.cacheMisses.Add(1) }
 // 但命中路径会在 miss 路径之外额外计数，故阅读指标时勿假设
 // conversions_total <= requests_total。
 //
-// 约束：source 与 target 不得含 "|"（用于拼接 key，见 splitKey）。
-// 当前所有 config 常量均不含此字符。
+// 基数防护：target 来自用户输入且未经入口校验，为防止 label 集合被
+// 恶意膨胀，conversionsByKey 超过 maxLabelKeys 后新 key 归并为 "unknown"。
 func (m *Metrics) IncConversion(source, target string) {
 	if source == "" {
 		source = "unknown"
@@ -79,8 +84,17 @@ func (m *Metrics) IncConversion(source, target string) {
 	if target == "" {
 		target = "unknown"
 	}
+	key := source + "|" + target
+	const unknownKey = "unknown|unknown"
 	m.mu.Lock()
-	m.conversionsByKey[source+"|"+target]++
+	// 基数防护：target 来自用户输入且未经入口校验。超限后新 key 归并到
+	// unknownKey。unknownKey 自身始终允许（它是溢出桶，不计入膨胀）。
+	if key != unknownKey {
+		if _, exists := m.conversionsByKey[key]; !exists && len(m.conversionsByKey) >= maxLabelKeys {
+			key = unknownKey
+		}
+	}
+	m.conversionsByKey[key]++
 	m.mu.Unlock()
 }
 
