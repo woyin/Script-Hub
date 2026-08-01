@@ -23,6 +23,10 @@
 
 脚本声明会转换为目标配置语法，但脚本 URL 和脚本内容保持原样。脚本自身必须兼容目标客户端。
 
+## 架构
+
+采用分层架构：入口层（main）→ API 层（internal/server，chi 路由 + singleflight）→ 业务层（internal/rewrite 重写引擎、internal/rule 规则集引擎）→ 工具/防护/可观测层（httpclient、ssrf、metrics、cache、util）。完整架构图、依赖关系与核心流程见 [PROJECT_INDEX.md](PROJECT_INDEX.md)。
+
 ## 运行
 
 ```bash

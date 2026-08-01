@@ -8,13 +8,15 @@ Script Hub（Go 重写版）是一个代理规则与脚本转换服务，完整�
 ## 架构说明
 采用分层架构，职责由外向内递进：
 
-- **入口层** (`main.go`): 程序启动、配置加载、HTTP 服务生命周期与信号处理
-- **API 层** (`internal/server`): chi 路由器 + 全捕获后手动分发，handler.go 为业务协调中枢
+- **入口层** (`main.go`): 程序启动、配置加载、HTTP 服务生命周期与信号处理；同步 SSRF 开关到 ssrf 包
+- **API 层** (`internal/server`): chi 路由器 + 全捕获后手动分发，handler.go 为业务协调中枢；含 singleflight 防缓存击穿
 - **UI 层** (`internal/frontend`): 通过 `//go:embed` 内嵌 HTML 转换页面，注入 baseURL 返回客户端
 - **业务层** (`internal/rewrite` + `internal/rule`): 两条独立的「解析 → 中间表示 → 转换」管线
-  - `rewrite/` — 重写规则转换（QX/Surge/Loon → Surge/Shadowrocket/Loon/Stash）
+  - `rewrite/` — 重写规则转换（QX/Surge/Loon → Surge/Shadowrocket/Loon/Stash/QX）
   - `rule/` — 规则集转换（通用规则 → 各平台格式/域名集）
-- **工具层** (`internal/httpclient` + `internal/util`): HTTP 请求封装、布尔/参数/查询解析工具
+- **工具层** (`internal/httpclient` + `internal/util`): HTTP 请求封装（带 SSRF 受控拨号）、布尔/参数/查询解析工具
+- **防护层** (`internal/ssrf`): SSRF 防护，在 DialContext 阶段原子完成 DNS 解析+IP 校验+连接（防 DNS rebinding）
+- **可观测层** (`internal/metrics` + `internal/cache`): Prometheus 指标收集、带 TTL 的内存缓存
 - **配置层** (`internal/config`): 环境变量配置加载 + 平台/格式常量枚举
 - **数据层** (`internal/types`): 跨模块共享的 ResponseData / ResponseWriter 接口
 
@@ -46,7 +48,7 @@ Script Hub（Go 重写版）是一个代理规则与脚本转换服务，完整�
 ### internal/rewrite
 - **地位**: 业务层 — 重写转换引擎
 - **功能**: QX/Surge/Loon 重写规则的多格式解析、参数改写、目标平台转换
-- **核心文件**: parser.go（入口+类型）, parsers.go（来源解析）, converter.go（目标转换）, params.go（参数改写）, ruleparser.go（逻辑规则）
+- **核心文件**: parser.go（入口+类型）, parsers.go（共享解析辅助+自动识别）, parsers_qx.go/parsers_surge.go/parsers_loon.go（各来源解析器）, converter.go（共享 IR+调度）, converter_{surge,loon,qx,generic}.go + stash.go（各目标转换器）, params.go（参数改写）, ruleparser.go（逻辑规则）
 - [详见 FOLDER_INDEX.md](internal/rewrite/FOLDER_INDEX.md)
 
 ### internal/rule
@@ -60,6 +62,24 @@ Script Hub（Go 重写版）是一个代理规则与脚本转换服务，完整�
 - **功能**: HTTP 服务结构、URL 路由分发、请求处理器（协调 frontend/rewrite/rule）
 - **核心文件**: server.go, router.go, handler.go
 - [详见 FOLDER_INDEX.md](internal/server/FOLDER_INDEX.md)
+
+### internal/ssrf
+- **地位**: 防护层
+- **功能**: SSRF 防护，在 DialContext 阶段原子完成 DNS 解析+IP 校验+TCP 连接，防 DNS rebinding
+- **核心文件**: ssrf.go
+- [详见 FOLDER_INDEX.md](internal/ssrf/FOLDER_INDEX.md)
+
+### internal/metrics
+- **地位**: 可观测层
+- **功能**: 轻量级 Prometheus 指标收集（原子计数器，零外部依赖），含 label 基数防护
+- **核心文件**: metrics.go
+- [详见 FOLDER_INDEX.md](internal/metrics/FOLDER_INDEX.md)
+
+### internal/cache
+- **地位**: 可观测层
+- **功能**: 带 TTL 的内存缓存（惰性清理 + 上限保护），缓存不含 localtext 的远程转换结果
+- **核心文件**: cache.go
+- [详见 FOLDER_INDEX.md](internal/cache/FOLDER_INDEX.md)
 
 ### internal/types
 - **地位**: 数据层
@@ -98,8 +118,8 @@ graph TB
 
   subgraph 业务层-重写引擎
     RewriteParser["rewrite/parser.go"]
-    RewriteParsers["rewrite/parsers.go"]
-    RewriteConv["rewrite/converter.go"]
+    RewriteParsers["parsers_{qx,surge,loon}.go"]
+    RewriteConv["converter_{surge,loon,qx,generic}.go + stash.go"]
     RewriteParams["rewrite/params.go"]
     RewriteRuleParser["rewrite/ruleparser.go"]
   end
@@ -113,11 +133,22 @@ graph TB
     Util["util.go"]
   end
 
+  subgraph 防护层
+    SSRF["ssrf/ssrf.go"]
+  end
+
+  subgraph 可观测层
+    Metrics["metrics/metrics.go"]
+    Cache["cache/cache.go"]
+    Flight["server/flight.go"]
+  end
+
   subgraph 数据层
     Types["types.go"]
   end
 
   Main -->|加载配置| Config
+  Main -->|同步 SSRF 开关| SSRF
   Main -->|创建服务| Server
   Server -->|注册路由| Router
   Router -->|分发请求| Handler
@@ -125,11 +156,15 @@ graph TB
   Frontend -->|内嵌| HTML
   Handler -->|重写转换| RewriteParser
   Handler -->|规则转换| RuleParser
+  Handler -->|缓存查询| Cache
+  Handler -->|singleflight| Flight
+  Handler -->|指标| Metrics
 
   RewriteParser -->|解析| RewriteParsers
   RewriteParser -->|转换| RewriteConv
   RewriteParser -->|参数改写| RewriteParams
   RewriteParser -->|HTTP 抓取| HTTPClient
+  RewriteParser -->|fetch 失败计数| Metrics
   RewriteParsers -->|工具| Util
   RewriteConv -->|工具| Util
   RewriteParams -->|HTTP 抓取| HTTPClient
@@ -138,6 +173,9 @@ graph TB
 
   RuleParser -->|HTTP 抓取| HTTPClient
   RuleParser -->|工具| Util
+  RuleParser -->|fetch 失败计数| Metrics
+
+  HTTPClient -->|受控拨号| SSRF
 
   RewriteParser -->|类型契约| Types
   RuleParser -->|类型契约| Types
@@ -173,7 +211,7 @@ graph TB
 
 ## 技术栈
 
-- **语言**: Go 1.22+
+- **语言**: Go 1.25
 - **HTTP 路由**: github.com/go-chi/chi/v5
 - **前端**: 内嵌 HTML（//go:embed）
 - **部署**: 单二进制，默认 0.0.0.0:9100
@@ -184,8 +222,11 @@ graph TB
 |------|------|--------|
 | `PORT` | 监听端口 | `9100` |
 | `HOST` | 监听地址 | `0.0.0.0` |
-| `HTTP_TIMEOUT` | HTTP 请求超时（秒） | `20` |
+| `HTTP_TIMEOUT` | 单次上游 fetch 超时（秒） | `20` |
 | `PARSER_BODY_MAX` | 最大响应体（KB） | `600` |
+| `REQUEST_TIMEOUT` | 单次转换请求总超时（秒，覆盖多 URL 串行 fetch） | `60` |
+| `CACHE_TTL_SECONDS` | 转换结果缓存 TTL（秒，0=禁用；仅缓存不含 localtext 的远程转换） | `0` |
+| `SSRF_BLOCK_PRIVATE` | 拦截指向私有/保留地址的上游请求（防 SSRF） | `true` |
 
 ## 快速开始
 
