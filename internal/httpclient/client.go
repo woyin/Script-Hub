@@ -28,13 +28,13 @@ const defaultMaxBodyKB = 600
 // Client 是带有可配置超时和自定义头的 HTTP 客户端。
 type Client struct {
 	client    *http.Client
-	timeout   time.Duration
 	maxBodyKB int               // 响应体最大字节数（KB），超过则中止读取并报错
 	headers   map[string]string // 默认请求头
 }
 
 // NewClient 创建带有指定超时（秒）的 HTTP 客户端。
 // maxBodyKB 限制单次响应体最大字节数（按 KB 计），<=0 时使用默认值。
+// 超时由内部 http.Client.Timeout 负责（覆盖拨号+TLS+读+写全阶段）。
 //
 // 当 ssrf.Enabled=true 时，使用内置 SSRF 校验的 Transport：
 // DNS 解析、IP 校验与实际 TCP 连接在 DialContext 阶段原子完成，
@@ -52,7 +52,6 @@ func NewClient(timeoutSec int, maxBodyKB int) *Client {
 	}
 	return &Client{
 		client:    hc,
-		timeout:   time.Duration(timeoutSec) * time.Second,
 		maxBodyKB: maxBodyKB,
 		headers: map[string]string{
 			"User-Agent": "script-hub/1.0.0",
