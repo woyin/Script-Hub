@@ -60,11 +60,6 @@ func NewClient(timeoutSec int, maxBodyKB int) *Client {
 	}
 }
 
-// SetHeader 设置所有后续请求的默认请求头。
-func (c *Client) SetHeader(key, value string) {
-	c.headers[key] = value
-}
-
 // Get 执行带自定义头的 HTTP GET 请求。
 func (c *Client) Get(ctx context.Context, url string) (string, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

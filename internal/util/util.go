@@ -1,5 +1,5 @@
 // Input: net/url, strings
-// Output: func IsTrue(), func GetArgArr(), func ParseQueryString(), func ParseQueryStringLenient()
+// Output: func IsTrue(), func GetArgArr(), func ParseQueryString()
 // Pos: 工具层-共享工具函数，提供布尔判断、参数拆分与查询字符串解析
 //
 // 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
@@ -41,9 +41,6 @@ func GetArgArr(s string) []string {
 //   - 裸参数（无 "="）会被忽略（JS 端的正则要求有 "=" 才匹配）
 //   - 使用 url.PathUnescape 而非 QueryUnescape，因为 JS 的 decodeURIComponent
 //     不会将 "+" 解码为空格
-//
-// server/handler.go 使用此版本；scripts/scripts.go 中的简化版（允许裸参数）
-// 保留为 ParseQueryStringLenient。
 func ParseQueryString(query string) map[string]string {
 	result := make(map[string]string)
 	if query == "" {
@@ -59,35 +56,11 @@ func ParseQueryString(query string) map[string]string {
 		if pair == "" {
 			continue
 		}
-		kv := strings.SplitN(pair, "=", 2)
 		// JS regex 要求 '='，所以裸参数（无 '='）被忽略
-		key, _ := url.PathUnescape(kv[0])
-		if len(kv) == 2 {
+		if kv := strings.SplitN(pair, "=", 2); len(kv) == 2 {
+			key, _ := url.PathUnescape(kv[0])
 			val, _ := url.PathUnescape(kv[1])
 			result[key] = val
-		}
-		_ = key
-	}
-	return result
-}
-
-// ParseQueryStringLenient 解析 URL 查询字符串为键值对 map（宽松模式）。
-// 与 ParseQueryString 不同，裸参数（无 "="）会被保留为空值。
-// 用于脚本参数解析等场景。
-func ParseQueryStringLenient(query string) map[string]string {
-	result := make(map[string]string)
-	if query == "" {
-		return result
-	}
-	for _, pair := range strings.Split(query, "&") {
-		if pair == "" {
-			continue
-		}
-		kv := strings.SplitN(pair, "=", 2)
-		if len(kv) == 2 {
-			result[kv[0]] = kv[1]
-		} else {
-			result[kv[0]] = ""
 		}
 	}
 	return result

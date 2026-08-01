@@ -29,9 +29,8 @@ type Server struct {
 	cache      *cache.Cache // 转换结果缓存；cfg.CacheTTL<=0 时为 nil（禁用）
 	metrics    *metrics.Metrics
 	flight     *singleflight // 合并相同缓存 key 的并发转换，防缓存击穿
-	// 复用的解析器：httpclient.Client 内部的 http.Client 与 headers map 在构造后
-	// 只读（SetHeader 未被调用），可被多个 goroutine 并发安全使用。
-	// 避免每请求创建新的 http.Client（含 Transport、连接池）。
+	// 复用的解析器：httpclient.Client 构造后 headers map 只读，
+	// 可被多个 goroutine 并发安全使用，避免每请求创建新的 http.Client（含 Transport、连接池）。
 	rewriteParser *rewrite.Parser
 	ruleParser    *rule.Parser
 }

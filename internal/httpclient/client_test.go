@@ -53,7 +53,6 @@ func newTestServer(t *testing.T, status int, headers map[string]string, body []b
 func TestGet_PlainAndHeaders(t *testing.T) {
 	srv, captured := newTestServer(t, 200, map[string]string{"X-Custom": "v1"}, []byte("hello"), false)
 	c := NewClient(5, 0)
-	c.SetHeader("X-Test", "abc")
 	body, status, err := c.Get(context.Background(), srv.URL+"/path")
 	if err != nil {
 		t.Fatalf("Get err: %v", err)
@@ -68,9 +67,6 @@ func TestGet_PlainAndHeaders(t *testing.T) {
 	if got := captured.Header.Get("User-Agent"); got != "script-hub/1.0.0" {
 		t.Errorf("User-Agent = %q, want script-hub/1.0.0", got)
 	}
-	if got := captured.Header.Get("X-Test"); got != "abc" {
-		t.Errorf("X-Test = %q, want abc", got)
-	}
 	// 响应头应能透传
 	_ = captured
 }
@@ -78,11 +74,10 @@ func TestGet_PlainAndHeaders(t *testing.T) {
 func TestGetWithHeaders_OverridesAndAdds(t *testing.T) {
 	srv, captured := newTestServer(t, 201, nil, []byte("ok"), false)
 	c := NewClient(2, 0)
-	c.SetHeader("X-A", "default")
 	body, status, err := c.GetWithHeaders(context.Background(), srv.URL, map[string]string{
-		"X-A":        "override", // 覆盖默认头
+		"X-A":        "override", // 自定义头
 		"X-Extra":    "e1",
-		"User-Agent": "custom/2.0",
+		"User-Agent": "custom/2.0", // 覆盖默认 UA
 	})
 	if err != nil {
 		t.Fatalf("GetWithHeaders err: %v", err)
