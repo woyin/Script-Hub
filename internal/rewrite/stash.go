@@ -387,35 +387,3 @@ func convertSurgeHeaderRewriteToStash(line string) string {
 	}
 	return line
 }
-
-// convertSurgeHeaderRewriteToLoon converts a Surge [Header Rewrite] line to a
-// Loon [Rewrite] entry.
-//
-// Upstream Rewrite-Parser.js (loon-plugin branch, lines 1361-1366) only ever
-// runs this transform on rwhdBox entries that were normalized with a leading
-// "http-request "/"http-response " prefix — and that normalization only happens
-// for Loon-plugin sources (lines 678-728). Surge [Header Rewrite] raw lines are
-// NOT parsed into rwhdBox upstream, so they are silently dropped for Loon.
-//
-// To stay faithful while still surfacing the rule to the user:
-//   - For normalized (Loon-origin) form, apply the upstream transform (strip
-//     http-{request,response} prefix; for response rewrites, replace the first
-//     " header-" with " response-header-").
-//   - For Surge-origin raw lines, emit commented-out so the Loon [Rewrite]
-//     section does not receive a malformed entry.
-func convertSurgeHeaderRewriteToLoon(line string) string {
-	isResponse := strings.HasPrefix(line, "http-response ")
-	if strings.HasPrefix(line, "http-request ") {
-		line = strings.TrimPrefix(line, "http-request ")
-	} else if strings.HasPrefix(line, "http-response ") {
-		line = strings.TrimPrefix(line, "http-response ")
-	} else {
-		return "# " + line
-	}
-	if isResponse {
-		if idx := strings.Index(line, " header-"); idx >= 0 {
-			line = line[:idx] + " response-header-" + line[idx+len(" header-"):]
-		}
-	}
-	return line
-}

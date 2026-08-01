@@ -7,6 +7,11 @@ import (
 	"github.com/script-hub-org/script-hub/internal/util"
 )
 
+// convertToQXFormat converts parsed modules to a Quantumult X rewrite config.
+// Output sections: [rewrite_local] (rewrites + http scripts), [task_local] (cron scripts),
+// [mitm] (hostname list). Rules and metadata are emitted as comments since QX does not
+// carry them in the rewrite config. This closes the plugin-to-plugin conversion matrix:
+// any source (Surge/Shadowrocket/Loon/Stash/Egern/LanceX) can be turned into a QX rewrite.
 func (p *Parser) convertToQXFormat(modules []ParsedModule, target string, args map[string]string) string {
 	var rewrites []string // [rewrite_local]
 	var tasks []string    // [task_local]

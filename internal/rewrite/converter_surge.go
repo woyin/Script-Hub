@@ -546,5 +546,3 @@ func (p *Parser) formatSurgeOutput(out surgeOutput) string {
 
 	return sb.String()
 }
-
-// --- Loon ---

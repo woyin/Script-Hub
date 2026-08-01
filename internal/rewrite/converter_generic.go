@@ -67,7 +67,3 @@ func (p *Parser) convertToGenericFormat(modules []ParsedModule, target string, a
 	}
 	return sb.String()
 }
-
-// --- Utility functions ---
-
-// cleanRegexEscapes removes regex backslash escapes from a string
