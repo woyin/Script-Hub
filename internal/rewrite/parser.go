@@ -241,8 +241,7 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 				wg.Add(1)
 				go func(idx int, url string) {
 					defer wg.Done()
-					// SSRF 校验由 httpclient 的 DialContext 在拨号阶段完成（防 DNS rebinding），
-					// 此处不再单独 MaybeCheck，避免"先检查再连接"的 TOCTOU 窗口。
+					// SSRF 校验由 httpclient 的 DialContext 在拨号阶段完成（防 DNS rebinding）。
 					content, status, err := p.client.GetWithHeaders(ctx, url, reqHeaders)
 					if err != nil {
 						log.Printf("rewrite fetch error for %s: %v", url, err)

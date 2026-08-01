@@ -1,11 +1,11 @@
-// Input: errors, net, net/netip, net/url, strings
-// Output: func IsBlocked(), func Check(), func IsBlockedAddr(), func DialContext(), var ErrBlocked
-// Pos: 工具层-SSRF 防护，可选地阻止对私有/保留地址的上游请求
+// Input: context, errors, fmt, net, net/http, net/netip, time
+// Output: func IsBlockedAddr(), func DialContext(), func NewTransport(), var ErrBlocked, var Enabled
+// Pos: 工具层-SSRF 防护，在拨号阶段阻止对私有/保留地址的上游请求
 //
 // 本注释在文件修改时自动更新，同时触发 FOLDER_INDEX 和 PROJECT_INDEX 更新
 
-// Package ssrf 提供可选的 SSRF 防护：当启用时（SSRF_BLOCK_PRIVATE=1），
-// 拦截指向私有网段、环回、链路本地及云元数据地址的请求。
+// Package ssrf 提供 SSRF 防护：当启用时（SSRF_BLOCK_PRIVATE，默认 true），
+// 拦截指向私有网段、环回、链路本地及云元数据地址的上游请求。
 //
 // 防 DNS rebinding：真正的校验发生在拨号阶段（DialContext），
 // 解析出的 IP 与实际建立 TCP 连接的 IP 是同一个，消除"先检查再连接"的 TOCTOU 窗口。
@@ -18,61 +18,19 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"time"
 )
 
 // ErrBlocked 表示目标地址被 SSRF 策略拦截。
 var ErrBlocked = errors.New("ssrf: target address blocked")
 
-// IsBlocked 解析 rawURL 的主机，若解析出的 IP 落在私有/保留范围内则返回 true。
-// 对于主机名为域名的情况，解析其所有 A/AAAA 记录，任一命中即拦截。
-// 解析失败（非 IP、无法解析的域名）不拦截——交由上层 fetch 自行处理。
-//
-// 注意：本函数仅做纯校验，存在 DNS rebinding 的 TOCTOU 风险。
-// 生产环境的上游请求应依赖 httpclient（启用 SSRF 时注入 DialContext），
-// 在拨号阶段原子完成解析+校验+连接。本函数保留供独立校验场景使用。
-func IsBlocked(rawURL string) bool {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return false
-	}
-	host := u.Hostname()
-	if host == "" {
-		return false
-	}
-
-	// 直接是 IP 字面量
-	if addr, err := netip.ParseAddr(host); err == nil {
-		return isPrivateAddr(addr)
-	}
-
-	// 域名：解析所有 IP
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		// 无法解析（如离线、NXDOMAIN）不拦截，让 fetch 决定
-		return false
-	}
-	for _, ip := range ips {
-		if a, ok := netip.AddrFromSlice(ip); ok {
-			if isPrivateAddr(a) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// Check 是 IsBlocked 的错误返回变体：被拦截时返回 ErrBlocked。
-func Check(rawURL string) error {
-	if IsBlocked(rawURL) {
-		return ErrBlocked
-	}
-	return nil
-}
-
 // IsBlockedAddr 判断一个 IP 是否属于应拦截的范围（公开 API）。
 // 供 httpclient 的 DialContext 在拨号阶段复用，确保校验的 IP 就是实际连接的 IP。
+//
+// 这是纯函数，无 TOCTOU 风险——校验的 IP 由调用方（DialContext）在拨号时
+// 实际使用。历史上曾存在 IsBlocked/Check/MaybeCheck 这类"先解析再校验"的
+// URL 级 API，但它们存在 DNS rebinding 窗口（解析与连接分离），已删除。
+// 生产校验一律走 DialContext。
 func IsBlockedAddr(addr netip.Addr) bool {
 	addr = addr.Unmap()
 	if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() || addr.IsMulticast() || addr.IsUnspecified() {
@@ -89,20 +47,11 @@ func IsBlockedAddr(addr netip.Addr) bool {
 	return false
 }
 
-// isPrivateAddr 是 IsBlockedAddr 的内部别名，保留向后兼容。
-func isPrivateAddr(addr netip.Addr) bool { return IsBlockedAddr(addr) }
-
 // Enabled 控制是否启用 SSRF 检查。
-// 由配置层在启动时根据 SSRF_BLOCK_PRIVATE 环境变量设置（默认 false）。
+// 由 main 在启动时根据 cfg.SSRFBlockPrivate（默认 true）设置。
+// 零值为 false 仅为兼容不经过 main 的测试环境——测试构造的 Parser/Server
+// 不经 main.go，保持 Enabled=false 使其上游 httptest（监听 loopback）可正常工作。
 var Enabled = false
-
-// MaybeCheck 仅在启用时执行检查。未启用时直接返回 nil。
-func MaybeCheck(rawURL string) error {
-	if !Enabled {
-		return nil
-	}
-	return Check(rawURL)
-}
 
 // ── 受控拨号器（防 DNS rebinding） ──
 

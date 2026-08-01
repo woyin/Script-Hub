@@ -10,57 +10,6 @@ import (
 	"time"
 )
 
-func TestIsBlocked_PrivateIPs(t *testing.T) {
-	cases := []string{
-		"http://127.0.0.1/x",
-		"http://localhost/x",
-		"http://10.0.0.1/x",
-		"http://192.168.1.1/x",
-		"http://172.16.0.1/x",
-		"http://169.254.169.254/latest/meta-data/",
-		"http://[::1]/x",
-		"http://0.0.0.0/x",
-	}
-	for _, c := range cases {
-		if !IsBlocked(c) {
-			t.Errorf("expected blocked: %s", c)
-		}
-	}
-}
-
-func TestIsBlocked_PublicIPs(t *testing.T) {
-	// 公网 IP 不拦截
-	if IsBlocked("http://8.8.8.8/x") {
-		t.Error("8.8.8.8 should not be blocked")
-	}
-	// 公网域名（解析失败时不拦截，交由 fetch 处理）
-	// 这里用一个肯定能解析的公网域名
-	if IsBlocked("http://example.com/") {
-		t.Log("note: example.com resolved to private? (depends on env) — acceptable")
-	}
-}
-
-func TestMaybeCheck_DisabledByDefault(t *testing.T) {
-	old := Enabled
-	Enabled = false
-	defer func() { Enabled = old }()
-	if err := MaybeCheck("http://127.0.0.1/x"); err != nil {
-		t.Errorf("disabled ssrf should not block: %v", err)
-	}
-}
-
-func TestMaybeCheck_Enabled(t *testing.T) {
-	old := Enabled
-	Enabled = true
-	defer func() { Enabled = old }()
-	if err := MaybeCheck("http://127.0.0.1/x"); err != ErrBlocked {
-		t.Errorf("enabled ssrf should block loopback, got %v", err)
-	}
-	if err := MaybeCheck("http://8.8.8.8/x"); err != nil {
-		t.Errorf("enabled ssrf should not block public IP, got %v", err)
-	}
-}
-
 // ── DialContext 防 DNS rebinding 测试 ──
 
 // fakeResolver 允许测试注入预设的 DNS 解析结果，
