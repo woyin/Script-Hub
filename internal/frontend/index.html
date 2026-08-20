@@ -342,32 +342,17 @@ convert.addEventListener('click', async () => {
   }
   const type = document.querySelector('input[name="source"]:checked').value;
   const target = document.querySelector('input[name="target"]:checked').value;
-  const payload = { type, target };
+  const query = [
+    `type=${encodeURIComponent(type)}`,
+    `target=${encodeURIComponent(target)}`,
+  ];
   if (textMode) {
-    payload.args = { localtext: text };
-  } else {
-    payload.urls = remoteURLs;
+    query.push(`localtext=${encodeURIComponent(text)}`);
   }
-  convert.disabled = true;
-  convert.textContent = '转换中…';
-  setStatus('正在转换…');
-  try {
-    const response = await fetch(`${base}/api/convert`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const body = await response.text();
-    if (!response.ok) throw new Error(body || `HTTP ${response.status}`);
-    result.value = body;
-    copy.disabled = !body;
-    setStatus('转换完成');
-  } catch (error) {
-    setStatus(error.message || '转换失败', true);
-  } finally {
-    convert.disabled = false;
-    convert.textContent = '转换';
-  }
+  const input = textMode ? 'http://local.text' : remote;
+  result.value = `${base}/file/_start_/${encodeURIComponent(input)}/_end_/?${query.join('&')}`;
+  copy.disabled = false;
+  setStatus('转换链接已生成');
 });
 
 copy.addEventListener('click', async () => {

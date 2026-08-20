@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "**.go"
+      - "**.html"
       - "go.mod"
       - "go.sum"
       - "Dockerfile"
