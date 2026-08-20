@@ -11,7 +11,7 @@ func TestGenerateHTML(t *testing.T) {
 		t.Fatal("base URL not injected")
 	}
 	for _, required := range []string{
-		"/file/_start_/", "localtext", "http://local.text", "navigator.clipboard.writeText",
+		"/api/convert", "method: 'POST'", "Content-Type': 'application/json'", "localtext", "navigator.clipboard.writeText",
 		"all-module", "qx-rewrite", "surge-module", "loon-plugin", "rule-set",
 		"stash-stoverride", "shadowrocket-module", "surge-rule-set", "loon-rule-set",
 		"stash-rule-set", "shadowrocket-rule-set", "surge-domain-set", "stash-domain-set",
@@ -19,6 +19,9 @@ func TestGenerateHTML(t *testing.T) {
 		if !strings.Contains(html, required) {
 			t.Fatalf("required UI contract missing: %s", required)
 		}
+	}
+	if strings.Contains(html, "/file/_start_/") || strings.Contains(html, "URLSearchParams") {
+		t.Fatal("UI must use the JSON conversion API so local text is not corrupted by query-string encoding")
 	}
 	for _, removed := range []string{"evalScript", "script-converter", "__SCRIPT__", "eval(", "scriptMap", "/reload", "Vue"} {
 		if strings.Contains(html, removed) {

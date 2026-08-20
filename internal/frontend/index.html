@@ -328,25 +328,35 @@ convert.addEventListener('click', async () => {
     setStatus(textMode ? '请填写本地文件内容' : '请填写来源 URL 链接', true);
     return;
   }
+  const remoteURLs = textMode ? [] : remote.split('😂').map(url => url.trim()).filter(Boolean);
   if (!textMode) {
     try {
-      const url = new URL(remote);
-      if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+      for (const remoteURL of remoteURLs) {
+        const url = new URL(remoteURL);
+        if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+      }
     } catch {
       setStatus('URL 必须使用 http 或 https 协议', true);
       return;
     }
   }
-  const input = textMode ? 'http://local.text' : remote;
   const type = document.querySelector('input[name="source"]:checked').value;
   const target = document.querySelector('input[name="target"]:checked').value;
-  const query = new URLSearchParams({ type, target });
-  if (textMode) query.set('localtext', text);
+  const payload = { type, target };
+  if (textMode) {
+    payload.args = { localtext: text };
+  } else {
+    payload.urls = remoteURLs;
+  }
   convert.disabled = true;
   convert.textContent = '转换中…';
   setStatus('正在转换…');
   try {
-    const response = await fetch(`${base}/file/_start_/${encodeURIComponent(input)}/_end_/?${query}`);
+    const response = await fetch(`${base}/api/convert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
     const body = await response.text();
     if (!response.ok) throw new Error(body || `HTTP ${response.status}`);
     result.value = body;
