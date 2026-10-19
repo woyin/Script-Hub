@@ -8,8 +8,10 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,9 +23,12 @@ import (
 )
 
 const DefaultMaxBytes int64 = 800 << 20
-const WorkspaceBytes int64 = 64 << 20
 const magic = "SHCACHE2"
 const maxMetadata = 64 << 10
+
+// ErrCapacity 表示实际文件总量将超过配置的磁盘预算。
+var ErrCapacity = errors.New("insufficient cache capacity")
+var ErrUnavailable = errors.New("disk cache unavailable")
 
 type metadata struct {
 	ExpiresAt time.Time
@@ -203,32 +208,15 @@ func (c *Cache) Set(key string, rd types.ResponseData) error {
 	if len(data) > maxMetadata {
 		return fmt.Errorf("metadata exceeds limit")
 	}
-	total := int64(12+len(data)) + size
-	path := c.path(key)
-	c.mu.Lock()
-	if c.used+total > c.maxBytes {
-		err = c.evict(total, path)
-	}
-	if err == nil {
-		c.used += total
-	}
-	c.mu.Unlock()
+	workspace, err := c.Workspace(key)
 	if err != nil {
 		return err
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			c.mu.Lock()
-			c.used -= total
-			c.mu.Unlock()
-		}
-	}()
-	f, err := os.CreateTemp(c.dir, ".tmp-")
+	defer workspace.Close()
+	f, err := workspace.Create()
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
 	defer f.Close()
 	prefix := make([]byte, 12)
 	copy(prefix, magic)
@@ -247,9 +235,13 @@ func (c *Cache) Set(key string, rd types.ResponseData) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
+	// 将已写入临时文件的实际额度转交正式文件，不重复计费。
+	workspace.mu.Lock()
+	defer workspace.mu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if err := os.Rename(f.Name(), path); err != nil {
+	path := c.path(key)
+	if err := os.Rename(f.File.Name(), path); err != nil {
 		return err
 	}
 	if old := c.files[path]; old != nil {
@@ -258,8 +250,8 @@ func (c *Cache) Set(key string, rd types.ResponseData) error {
 			c.used -= old.size
 		}
 	}
-	c.files[path] = &record{size: total, expires: time.Now().Add(c.ttl), created: time.Now()}
-	committed = true
+	c.files[path] = &record{size: f.size, expires: time.Now().Add(c.ttl), created: time.Now()}
+	workspace.used -= f.size
 	return nil
 }
 
@@ -281,7 +273,7 @@ func (c *Cache) remove(path string) error {
 // evict 在锁内执行；读取者持有的文件及待刷新的原结果不会被容量淘汰。
 func (c *Cache) evict(reserve int64, protect string) error {
 	if reserve > c.maxBytes {
-		return fmt.Errorf("cache entry exceeds capacity")
+		return ErrCapacity
 	}
 	now := time.Now()
 	type candidate struct {
@@ -311,7 +303,7 @@ func (c *Cache) evict(reserve int64, protect string) error {
 		}
 	}
 	if c.used+reserve > c.maxBytes {
-		return fmt.Errorf("insufficient cache capacity")
+		return ErrCapacity
 	}
 	return nil
 }
@@ -324,15 +316,16 @@ func (c *Cache) Cleanup() error {
 	return c.evict(0, "")
 }
 
-// Workspace 预留固定预算，所有临时文件共享该上限，Close 释放预算。
-// 正文被响应持有时，工作目录和预算一直保留。
+// Workspace 按临时文件的实际长度计入全局预算，不预留固定额度。
+// 输出被响应持有时，其文件额度一直保留到工作目录清理。
 type Workspace struct {
-	mu    sync.Mutex
-	dir   string
-	limit int64
-	used  int64
-	cache *Cache
-	once  sync.Once
+	mu      sync.Mutex
+	dir     string
+	protect string
+	used    int64
+	cache   *Cache
+	closed  bool
+	once    sync.Once
 }
 type TempFile struct {
 	File      *os.File
@@ -342,33 +335,23 @@ type TempFile struct {
 
 func (c *Cache) Workspace(key string) (*Workspace, error) {
 	if c == nil {
-		return nil, fmt.Errorf("disk cache unavailable")
-	}
-	c.mu.Lock()
-	var err error
-	if c.used+WorkspaceBytes > c.maxBytes {
-		err = c.evict(WorkspaceBytes, c.path(key))
-	}
-	if err == nil {
-		c.used += WorkspaceBytes
-	}
-	c.mu.Unlock()
-	if err != nil {
-		return nil, err
+		return nil, ErrUnavailable
 	}
 	dir, err := os.MkdirTemp(c.dir, ".work-")
 	if err != nil {
-		c.mu.Lock()
-		c.used -= WorkspaceBytes
-		c.mu.Unlock()
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	return &Workspace{dir: dir, limit: WorkspaceBytes, cache: c}, nil
+	return &Workspace{dir: dir, protect: c.path(key), cache: c}, nil
 }
 func (w *Workspace) Create() (*TempFile, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return nil, os.ErrClosed
+	}
 	f, err := os.CreateTemp(w.dir, "part-")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	return &TempFile{File: f, workspace: w}, nil
 }
@@ -376,28 +359,75 @@ func (f *TempFile) Write(p []byte) (int, error) {
 	w := f.workspace
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.used+int64(len(p)) > w.limit {
-		return 0, fmt.Errorf("conversion temporary space exceeds limit")
+	if w.closed {
+		return 0, os.ErrClosed
+	}
+	offset, err := f.File.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0, err
+	}
+	growth := max(int64(0), offset+int64(len(p))-f.size)
+	c := w.cache
+	c.mu.Lock()
+	if growth > c.maxBytes-c.used {
+		err = c.evict(growth, w.protect)
+	}
+	if err == nil {
+		c.used += growth
+	}
+	c.mu.Unlock()
+	if err != nil {
+		return 0, err
 	}
 	n, err := f.File.Write(p)
-	f.size += int64(n)
-	w.used += int64(n)
+	if err != nil {
+		err = fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	actual := max(int64(0), offset+int64(n)-f.size)
+	if n == 0 {
+		actual = 0
+	}
+	f.size += actual
+	w.used += actual
+	// 短写或失败只计入已经写到磁盘的字节。
+	c.mu.Lock()
+	c.used -= growth - actual
+	c.mu.Unlock()
 	return n, err
 }
 func (f *TempFile) Reset() error {
 	w := f.workspace
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.closed {
+		return os.ErrClosed
+	}
 	if err := f.File.Truncate(0); err != nil {
 		return err
 	}
+	w.cache.mu.Lock()
+	w.cache.used -= f.size
+	w.cache.mu.Unlock()
 	w.used -= f.size
 	f.size = 0
 	_, err := f.File.Seek(0, io.SeekStart)
 	return err
 }
 func (w *Workspace) Close() {
-	w.once.Do(func() { os.RemoveAll(w.dir); w.cache.mu.Lock(); w.cache.used -= WorkspaceBytes; w.cache.mu.Unlock() })
+	w.once.Do(func() {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		w.closed = true
+		if err := os.RemoveAll(w.dir); err != nil {
+			// 清理失败不能释放仍占用磁盘的额度；重启时会再次清理。
+			log.Printf("转换临时文件清理失败: %v", err)
+			return
+		}
+		w.cache.mu.Lock()
+		w.cache.used -= w.used
+		w.cache.mu.Unlock()
+		w.used = 0
+	})
 }
 
 // 防止 os.File.ReadFrom 绕过临时空间计数。

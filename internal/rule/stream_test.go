@@ -2,6 +2,7 @@ package rule
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -118,5 +119,26 @@ func TestStreamMultiSourceOrderAndCancellation(t *testing.T) {
 	ws, _ = disk.Workspace("")
 	if _, err := parser.ParseStream(ctx, input, ws); err != context.Canceled {
 		t.Fatalf("cancel err=%v", err)
+	}
+}
+
+func TestStreamDiskCapacityFailureIsNotPartialSuccess(t *testing.T) {
+	cfg := config.LoadConfig()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "DOMAIN,example.com") }))
+	defer source.Close()
+	disk, err := cache.New(t.TempDir(), 60, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := disk.Workspace("key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := NewParser(cfg).ParseStream(context.Background(), ParseInput{URLs: []string{source.URL}, TargetApp: "shadowrocket-rule-set"}, ws)
+	if out.File != nil {
+		out.File.Close()
+	}
+	if !errors.Is(err, cache.ErrCapacity) {
+		t.Fatalf("expected capacity error, got %v", err)
 	}
 }

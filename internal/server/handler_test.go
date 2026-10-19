@@ -699,3 +699,29 @@ func TestCacheKey_StructureAndRefresh(t *testing.T) {
 		t.Fatal("target omitted")
 	}
 }
+
+func TestRuleDiskFailureDoesNotFallBackToMemory(t *testing.T) {
+	for _, brokenDirectory := range []bool{false, true} {
+		t.Run(fmt.Sprint(brokenDirectory), func(t *testing.T) {
+			cfg := config.LoadConfig()
+			cfg.CacheDir = t.TempDir()
+			cfg.CacheMaxBytes = 10
+			srv := New(cfg)
+			t.Cleanup(func() { srv.Shutdown(context.Background()) })
+			if brokenDirectory {
+				if err := os.RemoveAll(cfg.CacheDir); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(cfg.CacheDir, []byte("blocked"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			req := httptest.NewRequest(http.MethodGet, fileURL("rule-set", "shadowrocket-rule-set", "DOMAIN-SUFFIX,example.com"), nil)
+			rec := httptest.NewRecorder()
+			srv.router.ServeHTTP(rec, req)
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}

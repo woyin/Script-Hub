@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -187,34 +188,48 @@ func TestCache_OpenReadersSurviveReplacementAndCleanup(t *testing.T) {
 }
 
 func TestWorkspaceQuotaAndRecovery(t *testing.T) {
-	c := testCache(t, 60, WorkspaceBytes+1024)
+	c := testCache(t, 60, 10)
 	ws, err := c.Workspace("key")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Workspace("other"); err == nil {
-		t.Fatal("over-reservation accepted")
+	defer ws.Close()
+	other, err := c.Workspace("other")
+	if err != nil {
+		t.Fatal(err)
 	}
-	ws.limit = 10
+	defer other.Close()
+	if c.used != 0 {
+		t.Fatalf("empty workspaces charged %d bytes", c.used)
+	}
 	f, err := ws.Create()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer f.Close()
 	if _, err := io.Copy(f, strings.NewReader("12345678901")); err == nil {
 		t.Fatal("ReadFrom bypassed quota")
 	}
-	if err := f.Reset(); err != nil {
-		t.Fatal(err)
+	if c.used != 0 {
+		t.Fatalf("rejected write charged %d bytes", c.used)
 	}
 	if _, err := f.Write([]byte("123")); err != nil {
 		t.Fatal(err)
 	}
+	if c.used != 3 {
+		t.Fatalf("used=%d, want 3", c.used)
+	}
+	if err := f.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if c.used != 0 {
+		t.Fatalf("reset quota=%d", c.used)
+	}
 	f.Close()
 	ws.Close()
 	if c.used != 0 {
-		t.Fatalf("workspace reservation leaked %d", c.used)
+		t.Fatalf("workspace leaked %d", c.used)
 	}
-	// 模拟进程退出留下的旧格式缓存与临时目录。
 	os.WriteFile(filepath.Join(c.dir, "legacy.json"), []byte("old"), 0600)
 	os.Mkdir(filepath.Join(c.dir, ".work-crashed"), 0700)
 	restarted, err := New(c.dir, 60, c.maxBytes)
@@ -224,9 +239,34 @@ func TestWorkspaceQuotaAndRecovery(t *testing.T) {
 	if restarted.used != 0 {
 		t.Fatal("restart quota")
 	}
-	files, _ := os.ReadDir(c.dir)
-	if len(files) != 0 {
-		t.Fatal("startup leftovers")
+}
+
+// 小任务不能因固定预留而互相排斥，所有已写字节才计入总预算。
+func TestThirtyWorkspacesChargeActualBytes(t *testing.T) {
+	c := testCache(t, 60, 1024)
+	var wg sync.WaitGroup
+	for i := 0; i < 30; i++ {
+		ws, err := c.Workspace(fmt.Sprint(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ws.Close()
+		f, err := ws.Create()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := f.Write([]byte("1234567890")); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if c.used != 300 {
+		t.Fatalf("used=%d, want 300", c.used)
 	}
 }
 
@@ -255,5 +295,94 @@ func BenchmarkCacheStreamHit(b *testing.B) {
 				rd.File.Close()
 			}
 		})
+	}
+}
+
+func TestWorkspaceConcurrentCapacityAndOverwrite(t *testing.T) {
+	c := testCache(t, 60, 1000)
+	var wg sync.WaitGroup
+	var workspaces []*Workspace
+	for i := 0; i < 30; i++ {
+		ws, err := c.Workspace(fmt.Sprint(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		workspaces = append(workspaces, ws)
+		f, err := ws.Create()
+		if err != nil {
+			t.Fatal(err)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer f.Close()
+			_, err := f.Write(make([]byte, 80))
+			if err != nil && !errors.Is(err, ErrCapacity) {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if c.used != 960 {
+		t.Fatalf("used=%d, want 960", c.used)
+	}
+	for _, ws := range workspaces {
+		ws.Close()
+		ws.Close()
+	}
+	if c.used != 0 {
+		t.Fatalf("leaked %d bytes", c.used)
+	}
+	ws, _ := c.Workspace("overwrite")
+	f, _ := ws.Create()
+	defer f.Close()
+	if _, err := f.Write([]byte("12345")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("ab")); err != nil {
+		t.Fatal(err)
+	}
+	if c.used != 5 {
+		t.Fatalf("overwrite charged %d, want 5", c.used)
+	}
+	ws.Close()
+	if _, err := f.Write([]byte("x")); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("closed write: %v", err)
+	}
+}
+
+func TestCacheFailedPartialCopyPreservesOldAndReleasesBytes(t *testing.T) {
+	c := testCache(t, 60, 1024)
+	if err := c.Set("key", response("original")); err != nil {
+		t.Fatal(err)
+	}
+	used := c.used
+	source, err := os.CreateTemp(t.TempDir(), "source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.WriteString("partial"); err != nil {
+		t.Fatal(err)
+	}
+	rd := response("")
+	rd.File = types.NewFileBody(source, 0, 100, nil)
+	defer rd.File.Close()
+	if err := c.Set("key", rd); err == nil {
+		t.Fatal("short source accepted")
+	}
+	if c.used != used {
+		t.Fatalf("partial copy quota=%d, want %d", c.used, used)
+	}
+	got, ok := c.Get("key")
+	if !ok {
+		t.Fatal("old result lost")
+	}
+	defer got.File.Close()
+	body, err := io.ReadAll(got.File.Reader())
+	if err != nil || string(body) != "original" {
+		t.Fatalf("old result: %q %v", body, err)
 	}
 }

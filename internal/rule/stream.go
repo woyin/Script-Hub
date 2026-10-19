@@ -6,6 +6,7 @@ package rule
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -163,6 +164,9 @@ func (p *Parser) ParseStream(ctx context.Context, input ParseInput, workspace *c
 				decoded = u
 			}
 			status, fetchErr := p.client.GetTo(ctx, decoded, headers, source)
+			if errors.Is(fetchErr, cache.ErrCapacity) || errors.Is(fetchErr, cache.ErrUnavailable) {
+				return types.ResponseData{}, fetchErr
+			}
 			if fetchErr != nil || status != 200 {
 				incomplete = true
 				if fetchErr != nil {

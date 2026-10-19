@@ -50,7 +50,7 @@ func New(cfg *config.Config) *Server {
 	ruleParser := rule.NewParser(cfg)
 	diskCache, err := cache.New(cfg.CacheDir, cfg.CacheTTL, cfg.CacheMaxBytes)
 	if err != nil {
-		log.Printf("磁盘缓存不可用，转换继续运行: %v", err)
+		log.Printf("磁盘缓存不可用，规则转换将拒绝使用全内存回退: %v", err)
 	}
 	s := &Server{
 		router:        r,

@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/script-hub-org/script-hub/internal/cache"
 	"github.com/script-hub-org/script-hub/internal/config"
 	"github.com/script-hub-org/script-hub/internal/frontend"
 	"github.com/script-hub-org/script-hub/internal/rewrite"
@@ -459,6 +460,12 @@ func (s *Server) convertWithCacheContext(ctx context.Context, ck, source, target
 			}
 			if err := s.cache.Set(ck, rd); err != nil {
 				log.Printf("缓存写入失败: %v", err)
+				if force {
+					if rd.File != nil {
+						rd.File.Close()
+					}
+					return nil, err
+				}
 				return conversionResult{output: o}, nil
 			}
 			return conversionResult{output: o, stored: true}, nil
@@ -504,8 +511,11 @@ func withCacheStatus(out types.ResponseWriter, state string) types.ResponseWrite
 }
 
 // statusForError 将解析器返回的错误映射为合适的 HTTP 状态码。
-// 超时（DeadlineExceeded）返回 504，其余仍返回 500。
+// 超时返回 504，磁盘额度不足或不可用返回 503，其余返回 500。
 func statusForError(err error) int {
+	if errors.Is(err, cache.ErrCapacity) || errors.Is(err, cache.ErrUnavailable) {
+		return http.StatusServiceUnavailable
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return http.StatusGatewayTimeout
 	}
@@ -606,7 +616,7 @@ func (s *Server) formatsHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(supportedFormats)
 }
 
-// parseRules 限制冷转换并发；磁盘不可用时保留受输入大小限制的旧路径。
+// parseRules 限制冷转换并发；磁盘不足时拒绝，避免回退全内存路径。
 func (s *Server) parseRules(ctx context.Context, input rule.ParseInput, key string) (types.ResponseWriter, error) {
 	select {
 	case s.conversions <- struct{}{}:
@@ -616,14 +626,16 @@ func (s *Server) parseRules(ctx context.Context, input rule.ParseInput, key stri
 	}
 	if s.cache != nil {
 		workspace, err := s.cache.Workspace(key)
-		if err == nil {
-			return s.ruleParser.ParseStream(ctx, input, workspace)
+		if err != nil {
+			return nil, err
 		}
-		if ctx.Value(backgroundRefreshKey{}) != nil {
-			return nil, errors.New("background temporary space unavailable")
-		}
-		log.Printf("流式转换临时空间不可用，使用兼容路径: %v", err)
+		return s.ruleParser.ParseStream(ctx, input, workspace)
 	}
+	// 仅显式禁用磁盘缓存时保留原有行为；初始化失败不能触发内存回退。
+	if s.cfg.CacheTTL > 0 {
+		return nil, cache.ErrUnavailable
+	}
+
 	return s.ruleParser.Parse(ctx, input)
 }
 
