@@ -4,6 +4,12 @@ primary_region = "hkg"
 [build]
   dockerfile = "Dockerfile"
 
+[env]
+  # cn.yaml (geosite/cn) is 2.28MB; the default 600KB cap made the fetch fail and
+  # the converter returned HTTP 200 with an empty rule set. 4MB covers the
+  # largest upstream file with headroom.
+  PARSER_BODY_MAX = "4096"
+
 [http_service]
   internal_port = 9100
   force_https = true
@@ -21,4 +27,7 @@ primary_region = "hkg"
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory_mb = 256
+  # 256MB OOM-killed the process when several 2.9MB rule sets were converted at
+  # once (anon-rss 158MB before the kill). 512MB keeps 6 concurrent conversions
+  # alive.
+  memory_mb = 512
