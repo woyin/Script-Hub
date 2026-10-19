@@ -228,7 +228,7 @@ graph TB
 | `CACHE_TTL_SECONDS` | 磁盘结果缓存 TTL（秒，≤0 禁用） | `86400` |
 | `CACHE_DIR` | 磁盘缓存目录 | 系统临时目录下的 `script-hub-cache` |
 | `CACHE_MAX_BYTES` | 正式缓存、临时空间及打开的旧文件总预算 | `838860800` |
-| `MAX_CONCURRENT_CONVERSIONS` | 冷规则转换并发上限 | `2` |
+| `MAX_CONCURRENT_CONVERSIONS` | 冷规则转换并发上限；Fly 为 35 | `2` |
 | `SSRF_BLOCK_PRIVATE` | 拦截指向私有/保留地址的上游请求（防 SSRF） | `true` |
 
 ## 快速开始
