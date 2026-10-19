@@ -9,14 +9,14 @@ Script Hub（Go 重写版）是一个代理规则与脚本转换服务，完整�
 采用分层架构，职责由外向内递进：
 
 - **入口层** (`main.go`): 程序启动、配置加载、HTTP 服务生命周期与信号处理；同步 SSRF 开关到 ssrf 包
-- **API 层** (`internal/server`): chi 路由器 + 全捕获后手动分发，handler.go 为业务协调中枢；含 singleflight 防缓存击穿
+- **API 层** (`internal/server`): chi 路由器 + 全捕获后手动分发，handler.go 为业务协调中枢；stream.go 流式发送文件，含 singleflight 防缓存击穿及文件生命周期管理
 - **UI 层** (`internal/frontend`): 通过 `//go:embed` 内嵌 HTML 转换页面，注入 baseURL 返回客户端
 - **业务层** (`internal/rewrite` + `internal/rule`): 两条独立的「解析 → 中间表示 → 转换」管线
   - `rewrite/` — 重写规则转换（QX/Surge/Loon → Surge/Shadowrocket/Loon/Stash/QX）
   - `rule/` — 规则集转换（通用规则 → 各平台格式/域名集）
 - **工具层** (`internal/httpclient` + `internal/util`): HTTP 请求封装（带 SSRF 受控拨号）、布尔/参数/查询解析工具
 - **防护层** (`internal/ssrf`): SSRF 防护，在 DialContext 阶段原子完成 DNS 解析+IP 校验+连接（防 DNS rebinding）
-- **可观测层** (`internal/metrics` + `internal/cache`): Prometheus 指标收集、带 TTL 的内存缓存
+- **可观测层** (`internal/metrics` + `internal/cache`): Prometheus 指标收集、带 TTL 和总磁盘预算的流式文件缓存
 - **配置层** (`internal/config`): 环境变量配置加载 + 平台/格式常量枚举
 - **数据层** (`internal/types`): 跨模块共享的 ResponseData / ResponseWriter 接口
 
@@ -77,7 +77,7 @@ Script Hub（Go 重写版）是一个代理规则与脚本转换服务，完整�
 
 ### internal/cache
 - **地位**: 可观测层
-- **功能**: 带 TTL 的内存缓存（惰性清理 + 上限保护），缓存不含 localtext 的远程转换结果
+- **功能**: 带 TTL 和总磁盘预算的流式文件缓存（原子替换 + 定期清理 + 容量淘汰），缓存不含 localtext 的远程转换结果
 - **核心文件**: cache.go
 - [详见 FOLDER_INDEX.md](internal/cache/FOLDER_INDEX.md)
 
@@ -225,7 +225,10 @@ graph TB
 | `HTTP_TIMEOUT` | 单次上游 fetch 超时（秒） | `20` |
 | `PARSER_BODY_MAX` | 最大响应体（KB） | `600` |
 | `REQUEST_TIMEOUT` | 单次转换请求总超时（秒，覆盖多 URL 串行 fetch） | `60` |
-| `CACHE_TTL_SECONDS` | 转换结果缓存 TTL（秒，0=禁用；仅缓存不含 localtext 的远程转换） | `0` |
+| `CACHE_TTL_SECONDS` | 磁盘结果缓存 TTL（秒，≤0 禁用） | `86400` |
+| `CACHE_DIR` | 磁盘缓存目录 | 系统临时目录下的 `script-hub-cache` |
+| `CACHE_MAX_BYTES` | 正式缓存、临时空间及打开的旧文件总预算 | `838860800` |
+| `MAX_CONCURRENT_CONVERSIONS` | 冷规则转换并发上限 | `2` |
 | `SSRF_BLOCK_PRIVATE` | 拦截指向私有/保留地址的上游请求（防 SSRF） | `true` |
 
 ## 快速开始
@@ -244,3 +247,11 @@ PORT=8080 go run main.go
 
 ---
 ⚠️ **自指声明**: 任何功能、架构、写法更新必须在工作结束后更新此文档
+
+## 后台定时刷新
+
+- `config/refresh-jobs.json`：25 个远程源 × 3 个目标格式的 75 个启用任务，每 21600 秒刷新；启动加载，修改后重新部署。
+- `internal/config/refresh.go`：严格校验；入口支持 `--check-refresh-config`。
+- `internal/server/refresh_jobs.go`：单任务调度、复用转换缓存、退避及 Volume 状态记录。
+- `internal/server/refresh_limit.go`：公开强刷默认同键 60 秒、实例每分钟 10 次，不限制普通读取。
+- Fly 状态文件：`/data/refresh-status.json`；无公开管理接口。

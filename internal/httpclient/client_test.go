@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -302,5 +304,34 @@ func TestClient_SSRFDisabledAllowsLoopback(t *testing.T) {
 	_, status, err := c.Get(context.Background(), srv.URL)
 	if err != nil || status != 200 {
 		t.Fatalf("SSRF disabled: loopback request should succeed, got status=%d err=%v", status, err)
+	}
+}
+
+func TestGetToLimitsAndGzip(t *testing.T) {
+	for _, size := range []int{1024, 1025} {
+		for _, compressed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%d/gzip=%v", size, compressed), func(t *testing.T) {
+				body := strings.Repeat("x", size)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if compressed {
+						w.Header().Set("Content-Encoding", "gzip")
+						writer := gzip.NewWriter(w)
+						io.WriteString(writer, body)
+						writer.Close()
+					} else {
+						io.WriteString(w, body)
+					}
+				}))
+				defer server.Close()
+				var dst strings.Builder
+				status, err := NewClient(5, 1).GetTo(context.Background(), server.URL, nil, &dst)
+				if status != 200 || (size == 1024 && err != nil) || (size > 1024 && err == nil) {
+					t.Fatalf("status %d err %v", status, err)
+				}
+				if size == 1024 && dst.String() != body {
+					t.Fatal("stream body mismatch")
+				}
+			})
+		}
 	}
 }

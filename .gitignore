@@ -55,3 +55,6 @@ logs/
 .agents/
 .claude/
 skills-lock.json
+
+# Downloaded refresh task status
+refresh-status.json

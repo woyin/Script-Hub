@@ -3,11 +3,15 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,7 +22,10 @@ import (
 // newTestServer 构造一个挂载真实路由的 Server 并启动 httptest 实例。
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	srv := New(config.LoadConfig())
+	cfg := config.LoadConfig()
+	cfg.CacheDir = t.TempDir()
+	srv := New(cfg)
+	t.Cleanup(func() { srv.Shutdown(context.Background()) })
 	ts := httptest.NewServer(srv.router)
 	t.Cleanup(ts.Close)
 	return ts
@@ -323,7 +330,7 @@ func TestWriteResponse_ReplacesScriptHubURL(t *testing.T) {
 	rec := httptest.NewRecorder()
 	// 构造一个假的 ResponseWriter，body 中包含 https://script.hub/ 占位
 	out := fakeOutput{
-		status: 200,
+		status:  200,
 		headers: map[string]string{"Content-Type": "text/plain"},
 		body:    "see https://script.hub/file/x for detail",
 	}
@@ -565,7 +572,10 @@ func TestWriteCached_ReplacesScriptHubURL(t *testing.T) {
 // ── 缓存命中路径（通过 cacheKey + 实际请求验证）──
 
 func TestCacheKey_SkipsLocaltext(t *testing.T) {
-	srv := New(config.LoadConfig())
+	cfg := config.LoadConfig()
+	cfg.CacheDir = t.TempDir()
+	srv := New(cfg)
+	t.Cleanup(func() { srv.Shutdown(context.Background()) })
 	ck := srv.cacheKey("qx-rewrite", "surge-module", []string{"http://x"}, map[string]string{"localtext": "abc"})
 	if ck != "" {
 		t.Errorf("localtext should produce empty cache key, got %q", ck)
@@ -581,7 +591,8 @@ func TestCacheKey_DisabledWhenNilCache(t *testing.T) {
 }
 
 func TestCacheKey_IncludesArgs(t *testing.T) {
-	srv := New(&config.Config{CacheTTL: 60})
+	srv := New(&config.Config{CacheTTL: 60, CacheDir: t.TempDir()})
+	t.Cleanup(func() { srv.Shutdown(context.Background()) })
 	ck1 := srv.cacheKey("qx-rewrite", "surge-module", []string{"http://x"}, map[string]string{"policy": "DIRECT"})
 	ck2 := srv.cacheKey("qx-rewrite", "surge-module", []string{"http://x"}, map[string]string{"policy": "REJECT"})
 	if ck1 == ck2 {
@@ -589,14 +600,16 @@ func TestCacheKey_IncludesArgs(t *testing.T) {
 	}
 }
 
-// TestConvertWithCache_CorruptedEntryDoesNotDoubleCount 验证缓存条目类型
-// 断言失败时不会同时计 cache hit 和 miss（第一轮引入的双重计数 bug）。
-// 正常生产中 cache 只写 cachedResp，这里手动注入污染类型模拟异常。
+// TestConvertWithCache_CorruptedEntryDoesNotDoubleCount 验证损坏文件不会同时计 hit 和 miss。
+// 手动写入损坏文件，验证仅统计一次 miss。
 func TestConvertWithCache_CorruptedEntryDoesNotDoubleCount(t *testing.T) {
-	srv := New(&config.Config{CacheTTL: 60})
+	srv := New(&config.Config{CacheTTL: 60, CacheDir: t.TempDir()})
+	t.Cleanup(func() { srv.Shutdown(context.Background()) })
 	ck := "qx-rewrite|surge-module|http://x"
-	// 注入非 cachedResp 类型的污染条目
-	srv.cache.Set(ck, "not-a-cachedResp")
+	// 注入损坏的磁盘缓存文件
+	if err := os.WriteFile(filepath.Join(srv.cfg.CacheDir, fmt.Sprintf("%x.bin", sha256.Sum256([]byte(ck)))), []byte("broken JSON"), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	var buf strings.Builder
 	srv.metrics.Render(&buf)
@@ -607,7 +620,7 @@ func TestConvertWithCache_CorruptedEntryDoesNotDoubleCount(t *testing.T) {
 		t.Fatalf("expected zeroed counters before call, got:\n%s", before)
 	}
 
-	// 调用 convertWithCache：类型断言失败 → 应 fall-through 到 miss 路径，
+	// 调用 convertWithCache：文件损坏 → 应进入 miss 路径，
 	// 且 parse 返回 error（nil parse 不应被调，但污染会让它走 miss）。
 	// 用一个返回 error 的 parse 证明它走了 miss 路径。
 	parseCalled := false
@@ -637,7 +650,10 @@ func TestConvertWithCache_CorruptedEntryDoesNotDoubleCount(t *testing.T) {
 // ── runConvert rule-set 分支（API 路径）──
 
 func TestRunConvert_RuleSetFallback(t *testing.T) {
-	srv := New(config.LoadConfig())
+	cfg := config.LoadConfig()
+	cfg.CacheDir = t.TempDir()
+	srv := New(cfg)
+	t.Cleanup(func() { srv.Shutdown(context.Background()) })
 	ctx := context.Background()
 	req := convertRequest{
 		Type: "rule-set",
@@ -666,4 +682,20 @@ func (m *mockResponseWriter) Header() http.Header {
 func (m *mockResponseWriter) WriteHeader(code int) { m.code = code }
 func (m *mockResponseWriter) Write(b []byte) (int, error) {
 	return m.buf.Write(b)
+}
+
+func TestCacheKey_StructureAndRefresh(t *testing.T) {
+	srv := New(&config.Config{CacheTTL: 60, CacheDir: t.TempDir()})
+	t.Cleanup(func() { srv.Shutdown(context.Background()) })
+	defer srv.Shutdown(context.Background())
+	base := srv.cacheKey("rule-set", "surge-rule-set", []string{"https://example/a,b"}, nil)
+	if base == srv.cacheKey("rule-set", "surge-rule-set", []string{"https://example/a", "b"}, nil) {
+		t.Fatal("URL list collision")
+	}
+	if base != srv.cacheKey("rule-set", "surge-rule-set", []string{"https://example/a,b"}, map[string]string{"refresh": "true", "type": "rule-set", "target": "surge-rule-set"}) {
+		t.Fatal("control arguments changed key")
+	}
+	if base == srv.cacheKey("rule-set", "loon-rule-set", []string{"https://example/a,b"}, nil) {
+		t.Fatal("target omitted")
+	}
 }

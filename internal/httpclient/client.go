@@ -172,3 +172,34 @@ func ParseCustomHeaders(headerStr string) map[string]string {
 	}
 	return headers
 }
+
+// GetTo 将解压后的响应写入 dst，不在内存中保存完整正文。
+// 错误时 dst 可能包含部分内容，调用方必须丢弃该源文件。
+func (c *Client) GetTo(ctx context.Context, url string, headers map[string]string, dst io.Writer) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	c.applyHeaders(req, headers)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	reader, cleanup, err := c.bodyReader(resp)
+	if err != nil {
+		return resp.StatusCode, err
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+	limit := int64(c.maxBodyKB) * 1024
+	n, err := io.CopyBuffer(dst, io.LimitReader(reader, limit+1), make([]byte, 64<<10))
+	if err != nil {
+		return resp.StatusCode, err
+	}
+	if n > limit {
+		return resp.StatusCode, fmt.Errorf("响应体超过上限 %dKB", c.maxBodyKB)
+	}
+	return resp.StatusCode, nil
+}

@@ -75,17 +75,19 @@ type ParseInput struct {
 
 // ParseOutput contains the parsed and converted rule output.
 type ParseOutput struct {
-	Content string
-	Headers map[string]string
-	Status  int
+	Incomplete bool // 任一上游下载失败时为 true
+	Content    string
+	Headers    map[string]string
+	Status     int
 }
 
 // GetResponse implements the server.ResponseWriter interface.
 func (o ParseOutput) GetResponse() types.ResponseData {
 	return types.ResponseData{
-		Status:  o.Status,
-		Headers: o.Headers,
-		Body:    o.Content,
+		Status:     o.Status,
+		Incomplete: o.Incomplete,
+		Headers:    o.Headers,
+		Body:       o.Content,
 	}
 }
 
@@ -130,6 +132,7 @@ type ruleLine struct {
 // Parse fetches remote rule content and converts it to the target format.
 func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, error) {
 	var body string
+	var incomplete bool
 	localText := input.Arguments["localtext"]
 
 	if len(input.URLs) > 0 {
@@ -140,6 +143,7 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 			reqHeaders := httpclient.ParseCustomHeaders(input.Arguments["headers"])
 			// 并发抓取所有 URL，按原始顺序合并结果。
 			results := make([]string, len(input.URLs))
+			failed := make([]bool, len(input.URLs))
 			var wg sync.WaitGroup
 			for i, u := range input.URLs {
 				wg.Add(1)
@@ -151,6 +155,7 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 					}
 					// SSRF 校验由 httpclient 的 DialContext 在拨号阶段完成（防 DNS rebinding）。
 					content, status, err := p.client.GetWithHeaders(ctx, decodedURL, reqHeaders)
+					failed[idx] = err != nil || status != 200
 					if err != nil {
 						log.Printf("rule fetch error for %s: %v", decodedURL, err)
 						p.incFetchError()
@@ -164,6 +169,9 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 				}(i, u)
 			}
 			wg.Wait()
+			for _, bad := range failed {
+				incomplete = incomplete || bad
+			}
 			for _, r := range results {
 				if r != "" {
 					bodies = append(bodies, r)
@@ -185,9 +193,10 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 
 	if body == "" {
 		return ParseOutput{
-			Content: "",
-			Headers: map[string]string{"Content-Type": "text/plain; charset=utf-8"},
-			Status:  200,
+			Incomplete: incomplete,
+			Content:    "",
+			Headers:    map[string]string{"Content-Type": "text/plain; charset=utf-8"},
+			Status:     200,
 		}, nil
 	}
 
@@ -203,7 +212,8 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 	output = strings.ReplaceAll(output, " ;#", " #")
 
 	return ParseOutput{
-		Content: output,
+		Incomplete: incomplete,
+		Content:    output,
 		Headers: map[string]string{
 			"Content-Type":                 "text/plain; charset=utf-8",
 			"Access-Control-Allow-Origin":  "*",
@@ -215,87 +225,91 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 }
 
 // parseRules parses raw rule content into structured rule lines.
+// lineParser 在请求内复用筛选参数，逐行保持原有标准化顺序。
+type lineParser struct {
+	parser       *Parser
+	input        ParseInput
+	ipNoResolve  bool
+	includeItems []string
+	excludeItems []string
+}
+
+func (p *Parser) newLineParser(input ParseInput) *lineParser {
+	return &lineParser{p, input, util.IsTrue(input.Arguments["nore"]), util.GetArgArr(input.Arguments["y"]), util.GetArgArr(input.Arguments["x"])}
+}
 func (p *Parser) parseRules(content string, input ParseInput) []ruleLine {
-	lines := strings.Split(content, "\n")
+	decoder := p.newLineParser(input)
 	var rules []ruleLine
+	for _, line := range strings.Split(content, "\n") {
+		if rule := decoder.parse(line); rule != nil {
+			rules = append(rules, *rule)
+		}
+	}
+	return rules
+}
+func (d *lineParser) parse(rawLine string) *ruleLine {
+	ipNoResolve, includeItems, excludeItems := d.ipNoResolve, d.includeItems, d.excludeItems
+	line := strings.TrimSpace(rawLine)
 
-	// 所有正则均为包级预编译变量（见文件顶部 ruleRe* 变量），
-	// 避免在逐行处理循环中重复编译。
+	// Normalize line — mirrors JS preprocessing order
+	line = ruleRePayload.ReplaceAllString(line, "")
+	line = ruleReCommentPrefix.ReplaceAllString(line, "#")
+	line = ruleReDashPrefix.ReplaceAllString(line, "")
+	line = ruleReInlineComment.ReplaceAllString(line, "$1")
+	// Protect commas inside {N,M} quantifiers before any comma-based split
+	line = ruleReCommaGuard.ReplaceAllString(line, "${1}t&zd;${2}")
+	// Drop script/complex pattern lines (matches JS regex; only affects non-U lines)
+	line = ruleReScriptLine.ReplaceAllString(line, "")
+	line = strings.ReplaceAll(line, "'", "")
+	line = strings.ReplaceAll(line, `"`, "")
 
-	ipNoResolve := util.IsTrue(input.Arguments["nore"])
+	// Convert shorthand prefixes: consume the prefix char plus an optional leading dot
+	line = ruleReShorthand.ReplaceAllString(line, "DOMAIN-SUFFIX,")
 
-	includeItems := util.GetArgArr(input.Arguments["y"])
-	excludeItems := util.GetArgArr(input.Arguments["x"])
-
-	for _, rawLine := range lines {
-		line := strings.TrimSpace(rawLine)
-
-		// Normalize line — mirrors JS preprocessing order
-		line = ruleRePayload.ReplaceAllString(line, "")
-		line = ruleReCommentPrefix.ReplaceAllString(line, "#")
-		line = ruleReDashPrefix.ReplaceAllString(line, "")
-		line = ruleReInlineComment.ReplaceAllString(line, "$1")
-		// Protect commas inside {N,M} quantifiers before any comma-based split
-		line = ruleReCommaGuard.ReplaceAllString(line, "${1}t&zd;${2}")
-		// Drop script/complex pattern lines (matches JS regex; only affects non-U lines)
-		line = ruleReScriptLine.ReplaceAllString(line, "")
-		line = strings.ReplaceAll(line, "'", "")
-		line = strings.ReplaceAll(line, `"`, "")
-
-		// Convert shorthand prefixes: consume the prefix char plus an optional leading dot
-		line = ruleReShorthand.ReplaceAllString(line, "DOMAIN-SUFFIX,")
-
-		// Include (y): strip leading comment mark when keyword matches the whole line
-		if includeItems != nil {
-			for _, item := range includeItems {
-				if strings.Contains(line, item) {
-					line = strings.TrimPrefix(line, "#")
-				}
+	// Include (y): strip leading comment mark when keyword matches the whole line
+	if includeItems != nil {
+		for _, item := range includeItems {
+			if strings.Contains(line, item) {
+				line = strings.TrimPrefix(line, "#")
 			}
 		}
-		// Exclude (x): mark line as excluded with ;# prefix when keyword matches
-		if excludeItems != nil {
-			for _, item := range excludeItems {
-				if strings.Contains(line, item) {
-					line = ";#" + line
-				}
+	}
+	// Exclude (x): mark line as excluded with ;# prefix when keyword matches
+	if excludeItems != nil {
+		for _, item := range excludeItems {
+			if strings.Contains(line, item) {
+				line = ";#" + line
 			}
-		}
-
-		// ipNoResolve: append ,no-resolve only when nore=true and rule is ip-cidr/ip-cidr6
-		if ipNoResolve {
-			if ruleReIPRule.MatchString(strings.ToLower(line)) {
-				line = line + ",no-resolve"
-			}
-		}
-
-		// Now drop comment lines (after y may have uncommented them)
-		line = ruleReDropComment.ReplaceAllString(line, "")
-
-		// Skip empty lines and section headers
-		if line == "" || strings.HasPrefix(line, "[") {
-			continue
-		}
-
-		// Auto-detect rule type for lines without comma separator
-		if !strings.Contains(line, ",") {
-			if ruleReCIDR.MatchString(line) {
-				line = "IP-CIDR," + line
-			} else if ruleReCIDR6.MatchString(line) {
-				line = "IP-CIDR6," + line
-			} else {
-				line = "DOMAIN," + line
-			}
-		}
-
-		// Parse the rule
-		rl := p.parseRuleLine(line, input)
-		if rl != nil {
-			rules = append(rules, *rl)
 		}
 	}
 
-	return rules
+	// ipNoResolve: append ,no-resolve only when nore=true and rule is ip-cidr/ip-cidr6
+	if ipNoResolve {
+		if ruleReIPRule.MatchString(strings.ToLower(line)) {
+			line = line + ",no-resolve"
+		}
+	}
+
+	// Now drop comment lines (after y may have uncommented them)
+	line = ruleReDropComment.ReplaceAllString(line, "")
+
+	// Skip empty lines and section headers
+	if line == "" || strings.HasPrefix(line, "[") {
+		return nil
+	}
+
+	// Auto-detect rule type for lines without comma separator
+	if !strings.Contains(line, ",") {
+		if ruleReCIDR.MatchString(line) {
+			line = "IP-CIDR," + line
+		} else if ruleReCIDR6.MatchString(line) {
+			line = "IP-CIDR6," + line
+		} else {
+			line = "DOMAIN," + line
+		}
+	}
+
+	return d.parser.parseRuleLine(line, d.input)
 }
 
 // parseRuleLine parses a single rule line into a ruleLine struct.

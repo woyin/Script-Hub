@@ -1,5 +1,20 @@
 app = "breestealth-scripthub-go"
-primary_region = "hkg"
+primary_region = "sin"
+
+[env]
+  CACHE_DIR = "/data/cache"
+  CACHE_TTL_SECONDS = "86400"
+  CACHE_MAX_BYTES = "838860800"
+  MAX_CONCURRENT_CONVERSIONS = "2"
+  REFRESH_JOBS_FILE = "/config/refresh-jobs.json"
+  REFRESH_STATUS_FILE = "/data/refresh-status.json"
+  REFRESH_COOLDOWN_SECONDS = "60"
+  REFRESH_MAX_PER_MINUTE = "10"
+
+[[mounts]]
+  source = "scripthub_cache"
+  destination = "/data"
+  initial_size = "1gb"
 
 [build]
   dockerfile = "Dockerfile"

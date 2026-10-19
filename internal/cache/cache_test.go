@@ -1,116 +1,259 @@
 package cache
 
 import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/script-hub-org/script-hub/internal/types"
 )
 
-func TestCache_DisabledWhenZero(t *testing.T) {
-	c := New(0)
-	if c != nil {
-		t.Error("New(0) should return nil")
+func testCache(t *testing.T, ttl int, budget int64) *Cache {
+	t.Helper()
+	c, err := New(t.TempDir(), ttl, budget)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// nil cache 上调用 Get/Set 不应 panic
+	return c
+}
+func response(body string) types.ResponseData {
+	return types.ResponseData{Status: 200, Headers: map[string]string{"Content-Type": "text/plain"}, Body: body}
+}
+func TestCache_Disabled(t *testing.T) {
+	c, err := New("", 0, 0)
+	if err != nil || c != nil {
+		t.Fatalf("%v %v", c, err)
+	}
 	if _, ok := c.Get("x"); ok {
-		t.Error("nil cache Get should miss")
+		t.Fatal("nil cache hit")
 	}
-	c.Set("x", []byte("v"))
+	if err := c.Set("x", response("x")); err != nil {
+		t.Fatal(err)
+	}
 }
-
-func TestCache_SetGet(t *testing.T) {
-	c := New(60)
-	c.Set("k", "v")
-	got, ok := c.Get("k")
+func TestCache_PersistsAcrossRestart(t *testing.T) {
+	c := testCache(t, 60, 0)
+	if err := c.Set("key", response("original")); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := New(c.dir, 60, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := reopened.Get("key")
 	if !ok {
-		t.Fatal("miss after Set")
+		t.Fatal("cache miss")
 	}
-	if got != "v" {
-		t.Errorf("got %v, want v", got)
+	defer got.File.Close()
+	body, _ := io.ReadAll(got.File.Reader())
+	if string(body) != "original" || got.Headers["Content-Type"] != "text/plain" {
+		t.Fatalf("%+v %v", got, ok)
 	}
-}
-
-func TestCache_MissUnknownKey(t *testing.T) {
-	c := New(60)
-	if _, ok := c.Get("nope"); ok {
-		t.Error("unknown key should miss")
+	if _, ok := reopened.Get("other"); ok {
+		t.Fatal("unknown hit")
 	}
 }
-
-func TestCache_TTLExpiry(t *testing.T) {
-	c := New(1)
-	c.Set("k", "v")
-	// ttl=1s，等待过期
-	time.Sleep(1100 * time.Millisecond)
-	if _, ok := c.Get("k"); ok {
-		t.Error("expired entry should miss")
+func TestCache_ExpiryAndCorruption(t *testing.T) {
+	c := testCache(t, 60, 0)
+	if err := os.WriteFile(c.path("expired"), []byte(`{"ExpiresAt":"2000-01-01T00:00:00Z","Response":{"Status":200,"Body":"old"}}`), 0600); err != nil {
+		t.Fatal(err)
 	}
-	if c.Len() != 0 {
-		t.Errorf("after expiry+Get, Len = %d, want 0", c.Len())
+	if err := os.WriteFile(c.path("broken"), []byte("bad json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"expired", "broken"} {
+		if _, ok := c.Get(key); ok {
+			t.Fatal("invalid hit")
+		}
+		if _, err := os.Stat(c.path(key)); !os.IsNotExist(err) {
+			t.Fatalf("invalid file not removed: %v", err)
+		}
 	}
 }
-
-func TestCache_ConcurrentAccess(t *testing.T) {
-	c := New(60)
-	c.Set("k", 0)
-	done := make(chan struct{})
-	// 并发读写，验证不 panic 且最终可读到值
-	for i := 0; i < 50; i++ {
+func TestCache_CapacityAndFailedReplacement(t *testing.T) {
+	c := testCache(t, 60, 600)
+	if err := c.Set("a", response("a")); err != nil {
+		t.Fatal(err)
+	}
+	// 确保 b 比 a 晚生成，容量不足时优先淘汰 a。
+	old := time.Now().Add(-time.Second)
+	os.Chtimes(c.path("a"), old, old)
+	if err := c.Set("b", response(string(make([]byte, 30)))); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("c", response(string(make([]byte, 30)))); err != nil {
+		t.Fatal(err)
+	}
+	if c.used > c.maxBytes {
+		t.Fatal("capacity exceeded")
+	}
+	if rd, ok := c.Get("c"); !ok {
+		t.Fatal("new entry missing")
+	} else {
+		rd.File.Close()
+	}
+	before, _ := os.ReadFile(c.path("c"))
+	if err := c.Set("c", response(string(make([]byte, 1000)))); err == nil {
+		t.Fatal("oversized accepted")
+	}
+	after, _ := os.ReadFile(c.path("c"))
+	if string(before) != string(after) {
+		t.Fatal("failed replacement changed old file")
+	}
+	files, _ := filepath.Glob(filepath.Join(c.dir, ".tmp-*"))
+	if len(files) != 0 {
+		t.Fatal("temporary file leaked")
+	}
+}
+func TestCache_CleanupAndConcurrency(t *testing.T) {
+	c := testCache(t, 60, 0)
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
 		go func() {
-			c.Set("k", 1)
-			c.Get("k")
-			done <- struct{}{}
+			defer wg.Done()
+			if err := c.Set("key", response("body")); err != nil {
+				t.Error(err)
+			}
+			if rd, ok := c.Get("key"); ok {
+				rd.File.Close()
+			}
 		}()
 	}
-	for i := 0; i < 50; i++ {
-		<-done
+	wg.Wait()
+	old := time.Now().Add(-time.Hour)
+	c.mu.Lock()
+	c.files[c.path("key")].expires = old
+	c.mu.Unlock()
+	if err := c.Cleanup(); err != nil {
+		t.Fatal(err)
 	}
-	got, ok := c.Get("k")
+	if c.used != 0 {
+		t.Fatalf("used=%d", c.used)
+	}
+}
+func TestCache_RejectIncompleteAndBadDirectory(t *testing.T) {
+	c := testCache(t, 60, 0)
+	rd := response("")
+	rd.Incomplete = true
+	if err := c.Set("key", rd); err == nil {
+		t.Fatal("cached incomplete result")
+	}
+	path := filepath.Join(t.TempDir(), "file")
+	os.WriteFile(path, []byte("x"), 0600)
+	if _, err := New(path, 60, 0); err == nil {
+		t.Fatal("invalid directory accepted")
+	}
+}
+
+func TestCache_OpenReadersSurviveReplacementAndCleanup(t *testing.T) {
+	c := testCache(t, 60, 0)
+	if err := c.Set("key", response("old")); err != nil {
+		t.Fatal(err)
+	}
+	old, ok := c.Get("key")
 	if !ok {
-		t.Fatal("miss after concurrent access")
+		t.Fatal("missing old")
 	}
-	if got != 1 {
-		t.Errorf("got %v, want 1", got)
+	if err := c.Set("key", response("new")); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestCache_EvictionAtMaxEntries(t *testing.T) {
-	old := maxEntries
-	maxEntries = 4
-	defer func() { maxEntries = old }()
-
-	c := New(600)
-	// 填满至 maxEntries
-	for i := 0; i < 4; i++ {
-		c.Set(string(rune('a'+i)), i)
+	fresh, ok := c.Get("key")
+	if !ok {
+		t.Fatal("missing new")
 	}
-	if c.Len() != 4 {
-		t.Fatalf("Len = %d, want 4", c.Len())
+	a, _ := io.ReadAll(old.File.Reader())
+	b, _ := io.ReadAll(fresh.File.Reader())
+	if string(a) != "old" || string(b) != "new" {
+		t.Fatalf("mixed generations %q %q", a, b)
 	}
-	// 第 5 个 Set 触发驱逐：条目均未过期，应随机驱逐至 maxEntries*3/4 = 3
-	c.Set("e", 4)
-	if c.Len() > maxEntries {
-		t.Errorf("Len = %d, should not exceed maxEntries=%d after eviction", c.Len(), maxEntries)
+	old.File.Close()
+	fresh.File.Close()
+	if c.used != c.files[c.path("key")].size {
+		t.Fatal("retired reader quota leaked")
 	}
-	// 新写入的 key 必须存在
-	if _, ok := c.Get("e"); !ok {
-		t.Error("newly set key should be present")
+	c.files[c.path("key")].expires = time.Now().Add(-time.Second)
+	if _, ok := c.Get("key"); ok {
+		t.Fatal("expired hit")
+	}
+	if c.used != 0 {
+		t.Fatal("expired quota leaked")
 	}
 }
 
-func TestCache_EvictionPrefersExpired(t *testing.T) {
-	old := maxEntries
-	maxEntries = 3
-	defer func() { maxEntries = old }()
+func TestWorkspaceQuotaAndRecovery(t *testing.T) {
+	c := testCache(t, 60, WorkspaceBytes+1024)
+	ws, err := c.Workspace("key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Workspace("other"); err == nil {
+		t.Fatal("over-reservation accepted")
+	}
+	ws.limit = 10
+	f, err := ws.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(f, strings.NewReader("12345678901")); err == nil {
+		t.Fatal("ReadFrom bypassed quota")
+	}
+	if err := f.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("123")); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	ws.Close()
+	if c.used != 0 {
+		t.Fatalf("workspace reservation leaked %d", c.used)
+	}
+	// 模拟进程退出留下的旧格式缓存与临时目录。
+	os.WriteFile(filepath.Join(c.dir, "legacy.json"), []byte("old"), 0600)
+	os.Mkdir(filepath.Join(c.dir, ".work-crashed"), 0700)
+	restarted, err := New(c.dir, 60, c.maxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restarted.used != 0 {
+		t.Fatal("restart quota")
+	}
+	files, _ := os.ReadDir(c.dir)
+	if len(files) != 0 {
+		t.Fatal("startup leftovers")
+	}
+}
 
-	c := New(600)
-	c.Set("a", 1)
-	c.Set("b", 2)
-	// 让 "a" 过期
-	c.items["a"] = entry{value: 1, expiresAt: time.Now().Add(-time.Second)}
-	// 触发驱逐：应优先删除已过期的 "a"，保留 b
-	c.Set("c", 3)
-	c.Set("d", 4)
-	if _, ok := c.Get("b"); !ok {
-		t.Error("non-expired 'b' should survive when expired entries exist")
+func BenchmarkCacheStreamHit(b *testing.B) {
+	for _, size := range []int{1 << 20, 10 << 20, 50 << 20} {
+		b.Run(fmt.Sprintf("%dMiB", size>>20), func(b *testing.B) {
+			c, err := New(b.TempDir(), 86400, 0)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if err := c.Set("key", response(strings.Repeat("a", size))); err != nil {
+				b.Fatal(err)
+			}
+			buf := make([]byte, 64<<10)
+			b.ReportAllocs()
+			b.SetBytes(int64(size))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				rd, ok := c.Get("key")
+				if !ok {
+					b.Fatal("miss")
+				}
+				if _, err := io.CopyBuffer(io.Discard, rd.File.Reader(), buf); err != nil {
+					b.Fatal(err)
+				}
+				rd.File.Close()
+			}
+		})
 	}
 }

@@ -45,13 +45,18 @@ docker run --rm -p 9100:9100 ghcr.io/woyin/script-hub/script-hub:latest
 
 ### Fly.io
 
+仓库内 `fly.toml` 使用 `breestealth-scripthub-go`、新加坡区域和 9100 端口。Fly.io 健康检查请求 `GET /healthz`。
+
+部署前创建同区域的 1 GB Volume（已有同名卷时不要重复创建）：
+
 ```bash
 fly launch --no-deploy
-fly deploy
+fly volumes create scripthub_cache --region sin --size 1 --scheduled-snapshots=false
+fly deploy --ha=false
 fly status
 ```
 
-仓库内 `fly.toml` 使用 `breestealth-scripthub-go`、香港区域和 9100 端口。Fly.io 健康检查请求 `GET /healthz`。
+`fly.toml` 将卷挂载到 `/data`，缓存目录为 `/data/cache`。磁盘缓存仅由一个服务进程管理；多实例应分别挂载自己的 Volume。缓存可以重建，无需快照备份。
 
 ## 端点
 
@@ -90,8 +95,102 @@ fly status
 | `HTTP_TIMEOUT` | `20` | 单次上游 fetch 超时秒数 |
 | `PARSER_BODY_MAX` | `600` | 解析器内容上限 KB |
 | `REQUEST_TIMEOUT` | `60` | 单次转换请求总超时秒数（覆盖多 URL 串行 fetch） |
-| `CACHE_TTL_SECONDS` | `0` | 转换结果缓存 TTL 秒数（0=禁用；仅缓存不含 localtext 的远程转换） |
+| `CACHE_TTL_SECONDS` | `86400` | 磁盘结果缓存 TTL 秒数（≤0 禁用；仅缓存不含 localtext 的远程转换）；Fly 使用 86400 |
+| `CACHE_DIR` | 系统临时目录下的 `script-hub-cache` | 磁盘缓存目录；Fly 使用 `/data/cache` |
+| `CACHE_MAX_BYTES` | `838860800` | 正式缓存、读取中的旧文件及临时空间的总预算，默认 800 MiB；≤0 使用默认值 |
+| `MAX_CONCURRENT_CONVERSIONS` | `2` | 冷规则转换并发上限；等待受请求超时控制；≤0 使用 2 |
+| `REFRESH_JOBS_FILE` | 空字符串 | 后台任务 JSON 配置路径；空字符串禁用调度。Fly 为 `/config/refresh-jobs.json` |
+| `REFRESH_STATUS_FILE` | `CACHE_DIR` 后加 `-refresh-status.json` | 脱敏任务状态文件；Fly 为 `/data/refresh-status.json` |
+| `REFRESH_COOLDOWN_SECONDS` | `60` | 公开同键刷新冷却秒数；≤0 使用默认，最大 86400 |
+| `REFRESH_MAX_PER_MINUTE` | `10` | 实例公开强制刷新频率；≤0 使用默认，最大 1000 |
 | `SSRF_BLOCK_PRIVATE` | `true` | 拦截指向私有/保留地址的上游请求（防 SSRF）。设为 `false` 时放行内网抓取 |
+
+### 磁盘缓存与强制刷新
+
+缓存保存最终转换结果，正文不常驻 Go 缓存。新格式在单个 `.bin` 文件中分别保存有长度上限的元数据和原始正文，命中时只读取元数据，再用固定缓冲区发送正文。旧 `.json` 缓存在启动时清理，允许升级后冷启动。缓存键包含服务版本、来源类型、实际目标格式、有序源 URL 和转换参数；文件名使用 SHA-256 摘要。GET 与 POST 的等价请求共享结果。含 `localtext` 的请求不缓存。
+
+普通请求在有效期内读取磁盘文件；过期后重新下载并转换。GET 链接追加 `&refresh=true` 可立即刷新。POST `/api/convert` 在 `args` 中加入 `"refresh":"true"`。刷新控制参数不进入缓存键。公开强制刷新默认同键冷却 60 秒，且整个实例每分钟最多接受 10 次；超过时返回 HTTP 429 和 `Retry-After`。普通缓存读取不受该限流影响，后台配置任务不占用公开刷新配额。
+
+刷新成功后通过临时文件加原子替换更新原缓存。上游任一下载失败或返回非 200 时，结果不写入缓存；强制刷新返回错误，并保留原文件。原结果仍在有效期内时，后续普通请求可以继续使用。普通转换保留原有的部分结果返回行为，但部分结果不缓存。缓存过期后不提供旧结果兜底。
+
+响应头 `X-ScriptHub-Cache`：`HIT` 表示命中，`MISS` 表示未命中，`REFRESH` 表示强制刷新成功，`BYPASS` 表示未使用缓存。普通请求写缓存失败时仍返回转换结果并记录日志；强制刷新写入失败则返回错误。同键并发转换合并执行。
+
+每 10 分钟清理一次过期文件；空间不足时按需清理。空间不足时先清理过期文件，再淘汰最早生成的结果。预算包含原子替换期间新旧文件共存的空间，也包含仍在发送的旧文件及转换临时空间。正在读取的文件不作为容量淘汰对象。服务重启后可读取已有缓存；目录不可写时记录日志并禁用缓存，转换继续运行。后台定时刷新通过下述 JSON 清单配置。
+
+### 后台定时刷新配置
+
+编辑仓库内 `config/refresh-jobs.json`。Docker 镜像将它复制到 `/config/refresh-jobs.json`；Fly 已设置对应环境变量。配置在启动时读取，修改后需要重新部署，不提供热加载或公开管理接口。当前仓库清单包含 25 个远程源，分别转换为 Loon、Shadowrocket、Egern，共 75 个启用任务，每 21600 秒（6 小时）刷新。Fly 缓存 TTL 配置为 86400 秒（24 小时），为刷新失败预留重试时间。内联 `localtext` 规则不加入后台任务。
+
+```json
+{
+  "refreshJobs": [
+    {
+      "id": "china-geosite",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "surge-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo-lite/geosite/cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    }
+  ]
+}
+```
+
+| 字段 | 填写规则 |
+|---|---|
+| `refreshJobs` | 任务数组。填 `[]` 表示没有任务；最多 128 项 |
+| `id` | 唯一标识，1–64 个字母、数字、`-` 或 `_`，首字符为字母或数字 |
+| `enabled` | JSON 布尔值。设为 `true` 才执行 |
+| `intervalSeconds` | 60–604800 秒。启用任务时，间隔加调度偏移上限必须小于缓存 TTL。偏移上限为间隔的 10%，最多 30 秒。默认 TTL 下推荐填 21600 |
+| `request.type` | 当前固定为 `rule-set` |
+| `request.target` | 明确的输出格式，如 `surge-rule-set`、`loon-rule-set`、`stash-rule-set`、`surge-domain-set`。不可留空或填 `rule-set` |
+| `request.urls` | 1–16 个 HTTP(S) 源 URL，顺序与普通转换一致。填写解码后的源地址，不填写 `/file/_start_/...` 转换链接。URL 不允许用户名密码或片段 |
+| `request.args` | 转换参数，所有值使用字符串，例如 `"del": "true"`。不得包含 `localtext`、`refresh`、`type` 或 `target` |
+
+添加任务时，复制整个任务对象并修改 `id`、源地址、目标和参数。相同源的不同目标或参数可分别配置；完全相同的启用转换请求不允许重复配置。空列表、未知字段、错误类型和非法任务会在启动前校验；配置错误时服务拒绝启动，避免静默漏掉任务。
+
+修改后先校验，再发布：
+
+```bash
+go run . --check-refresh-config config/refresh-jobs.json
+fly deploy --ha=false
+```
+
+后台只有一个工作任务，直接复用现有转换和缓存逻辑，不通过公网访问自身。规则转换还受 `MAX_CONCURRENT_CONVERSIONS` 的共同上限控制。启动及到期时检查缓存的新鲜程度；如果前台已刷新，会推迟重复工作。冷缓存启动时错开执行，成功后按间隔加少量随机偏移再次运行。失败后从约 1 分钟开始指数退避，最多为间隔的一半或 30 分钟中的较小值，再附加少量偏移。任务超时受 `REQUEST_TIMEOUT` 控制，服务关闭会取消任务及同键等待。失败不覆盖旧缓存，旧结果仍按原 TTL 使用。
+
+任务状态保存到 `REFRESH_STATUS_FILE`，包含上次尝试、上次成功、下次执行、连续失败次数和错误类别；重启恢复失败退避。状态及调度日志不保存源 URL、请求头或完整错误文本。HTTP 转换指标包含后台转换。Fly 用户可通过自己的账号查看日志或下载状态文件：
+
+```bash
+fly logs
+fly ssh sftp get /data/refresh-status.json ./refresh-status.json
+```
+
+权限由配置文件权限和部署账号控制。没有匿名配置修改、任务详情或手动任务触发接口。不要把含私密源地址或 Authorization 请求头的清单提交到公开仓库；这类部署应使用受控文件路径，并通过 `REFRESH_JOBS_FILE` 指定。状态文件使用 0600 权限。不要将它放入 `CACHE_DIR`，该目录仅供缓存管理。
+
+### 规则集流式转换
+
+磁盘可用时，规则集转换依次下载每个源文件到可复用临时文件。下载完整且未超限后，逐行解析 Clash `payload` 列表或现有规则文本，分别将有效、不支持、已排除的规则写入临时文件。统计完成后组装原有格式的统计头及正文，发布完整缓存，再流式返回。保留原顺序和重复规则，不增加任意 YAML 语法支持。重写模块的冷转换继续使用原解析器，其缓存命中同样走流式发送。
+
+每个流式转换预留 64 MiB 磁盘预算，供所有分类文件及最终结果共同使用。该预留是磁盘空间，不是内存分配；最后一个响应读取者结束后释放。默认最多同时执行两个冷规则转换。单行长度上限为 2 MiB 与上游正文大小上限的较大值。上游正文限制仍按解压后字节数执行，生产默认仍为 600 KB。
+
+下载中断的源会整体丢弃。普通请求可返回其他完整源产生的结果，但不会缓存；强制刷新失败保留原缓存。磁盘或临时预算不可用时，记录日志并使用原有受输入大小限制的兼容路径。
+
+性能基准可运行：
+
+```bash
+go test ./internal/cache ./internal/server -run '^$' -bench 'BenchmarkCacheStreamHit|BenchmarkReplaceStream' -benchtime=3x
+go test ./internal/rule -run '^$' -bench BenchmarkRuleConversionMemory -benchtime=1x
+```
+
+本次 Apple M4 本地单次基准：8 MiB 输入的旧转换耗时约 536 ms，采样峰值额外 Go 堆内存约 96.38 MiB；流式转换耗时约 537 ms，采样峰值约 3.56 MiB。1 MiB 输入分别约 12.78 MiB 和 3.42 MiB。缓存文件从 1 MiB 增加至 50 MiB 时，正文读取的每次内存分配约 2.5–7 KB；GET 地址替换约 139 KB，不随文件大小线性增长。另以独立测试进程测量同一 8 MiB 输入，最大 RSS 从约 140 MiB 降到 20 MiB。测试专门将输入上限提高到 16 MiB，生产默认上限保持不变。这些是本地测量结果，不代表 Fly.io RSS 或线上延迟保证。
 
 ### SSRF 防护与 DNS rebinding
 

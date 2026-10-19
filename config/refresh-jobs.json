@@ -1,0 +1,1204 @@
+{
+  "refreshJobs": [
+    {
+      "id": "zscaler-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/zscaler.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "zscaler-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/zscaler.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "zscaler-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/zscaler.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "adblock-awavenue-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Clash.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "adblock-awavenue-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Clash.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "adblock-awavenue-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Clash.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "httpdns-cn-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/category-httpdns-cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "httpdns-cn-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/category-httpdns-cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "httpdns-cn-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/category-httpdns-cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "category-ai-not-cn-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/category-ai-!cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "category-ai-not-cn-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/category-ai-!cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "category-ai-not-cn-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/category-ai-!cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "steam-cn-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/steam@cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "steam-cn-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/steam@cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "steam-cn-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/steam@cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "category-games-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/category-games.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "category-games-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/category-games.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "category-games-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/category-games.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "youtube-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/youtube.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "youtube-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/youtube.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "youtube-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/youtube.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "netflix-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/netflix.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "netflix-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/netflix.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "netflix-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/netflix.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "disney-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/disney.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "disney-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/disney.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "disney-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/disney.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "primevideo-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/primevideo.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "primevideo-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/primevideo.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "primevideo-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/primevideo.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "tiktok-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/tiktok.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "tiktok-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/tiktok.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "tiktok-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/tiktok.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "github-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/github.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "github-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/github.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "github-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/github.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "linkedin-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/linkedin.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "linkedin-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/linkedin.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "linkedin-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/linkedin.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "onedrive-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/onedrive.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "onedrive-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/onedrive.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "onedrive-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/onedrive.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "azure-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/azure.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "azure-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/azure.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "azure-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/azure.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "microsoft-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/microsoft.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "microsoft-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/microsoft.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "microsoft-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/microsoft.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "apple-cn-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/apple@cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "apple-cn-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/apple@cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "apple-cn-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/apple@cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "google-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/google.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "google-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/google.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "google-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/google.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "meta-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/meta.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "meta-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/meta.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "meta-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/meta.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "apple-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/apple.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "apple-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/apple.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "apple-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/apple.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "geosite-private-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/private.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "geosite-private-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/private.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "geosite-private-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/private.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "geoip-private-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/private.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "geoip-private-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/private.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "geoip-private-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/private.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "china-geosite-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo-lite/geosite/cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "china-geosite-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo-lite/geosite/cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "china-geosite-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo-lite/geosite/cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "geolocation-cn-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/geolocation-cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "geolocation-cn-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/geolocation-cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "geolocation-cn-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/geolocation-cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "china-ip-loon",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "loon-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "china-ip-shadowrocket",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "shadowrocket-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    },
+    {
+      "id": "china-ip-egern",
+      "enabled": true,
+      "intervalSeconds": 21600,
+      "request": {
+        "type": "rule-set",
+        "target": "egern-rule-set",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.yaml"
+        ],
+        "args": {
+          "del": "true",
+          "jqEnabled": "true"
+        }
+      }
+    }
+  ]
+}

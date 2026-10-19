@@ -35,7 +35,7 @@ func clearEnv(t *testing.T, keys ...string) {
 }
 
 func TestLoadConfig_Defaults(t *testing.T) {
-	clearEnv(t, "PORT", "HOST", "HTTP_TIMEOUT", "PARSER_BODY_MAX", "REQUEST_TIMEOUT", "SSRF_BLOCK_PRIVATE")
+	clearEnv(t, "PORT", "HOST", "HTTP_TIMEOUT", "PARSER_BODY_MAX", "REQUEST_TIMEOUT", "SSRF_BLOCK_PRIVATE", "CACHE_TTL_SECONDS", "CACHE_DIR", "CACHE_MAX_BYTES", "REFRESH_JOBS_FILE", "REFRESH_STATUS_FILE", "REFRESH_COOLDOWN_SECONDS", "REFRESH_MAX_PER_MINUTE")
 	cfg := LoadConfig()
 	if cfg.Port != "9100" {
 		t.Errorf("Port = %q, want 9100", cfg.Port)
@@ -51,6 +51,12 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	}
 	if cfg.RequestTimeout != 60 {
 		t.Errorf("RequestTimeout = %d, want 60", cfg.RequestTimeout)
+	}
+	if cfg.CacheTTL != 86400 || cfg.CacheMaxBytes != 800<<20 || cfg.CacheDir == "" {
+		t.Fatalf("unexpected cache defaults: %+v", cfg)
+	}
+	if cfg.RefreshJobsFile != "" || cfg.RefreshCooldownSeconds != 60 || cfg.RefreshMaxPerMinute != 10 {
+		t.Fatalf("unexpected refresh defaults: %+v", cfg)
 	}
 	// SSRF 默认开启（产品边界为公网转换，防内网/云元数据探测）
 	if !cfg.SSRFBlockPrivate {
@@ -154,5 +160,15 @@ func TestSetVersion(t *testing.T) {
 	SetVersion("")
 	if Version != "v9.9.9" {
 		t.Errorf("SetVersion(\"\") should be a no-op, but Version = %q", Version)
+	}
+}
+
+func TestLoadConfig_CacheOverrides(t *testing.T) {
+	setEnv(t, "CACHE_TTL_SECONDS", "0")
+	setEnv(t, "CACHE_DIR", "/data/cache")
+	setEnv(t, "CACHE_MAX_BYTES", "123456")
+	cfg := LoadConfig()
+	if cfg.CacheTTL != 0 || cfg.CacheDir != "/data/cache" || cfg.CacheMaxBytes != 123456 {
+		t.Fatalf("unexpected cache config: %+v", cfg)
 	}
 }

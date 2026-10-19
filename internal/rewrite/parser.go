@@ -32,17 +32,19 @@ type ParseInput struct {
 
 // ParseOutput contains the parsed and converted rewrite output.
 type ParseOutput struct {
-	Content string
-	Headers map[string]string
-	Status  int
+	Incomplete bool // 任一上游下载失败时为 true
+	Content    string
+	Headers    map[string]string
+	Status     int
 }
 
 // GetResponse implements the server response interface.
 func (o ParseOutput) GetResponse() types.ResponseData {
 	return types.ResponseData{
-		Status:  o.Status,
-		Headers: o.Headers,
-		Body:    o.Content,
+		Status:     o.Status,
+		Incomplete: o.Incomplete,
+		Headers:    o.Headers,
+		Body:       o.Content,
 	}
 }
 
@@ -226,6 +228,7 @@ func (p *Parser) incFetchError() {
 // Parse fetches remote content and converts rewrite rules to the target format.
 func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, error) {
 	var body string
+	var incomplete bool
 	localText := input.Arguments["localtext"]
 
 	if len(input.URLs) > 0 {
@@ -236,6 +239,7 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 			reqHeaders := httpclient.ParseCustomHeaders(input.Arguments["headers"])
 			// 并发抓取所有 URL，按原始顺序合并结果。
 			results := make([]string, len(input.URLs))
+			failed := make([]bool, len(input.URLs))
 			var wg sync.WaitGroup
 			for i, u := range input.URLs {
 				wg.Add(1)
@@ -243,6 +247,7 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 					defer wg.Done()
 					// SSRF 校验由 httpclient 的 DialContext 在拨号阶段完成（防 DNS rebinding）。
 					content, status, err := p.client.GetWithHeaders(ctx, url, reqHeaders)
+					failed[idx] = err != nil || status != 200
 					if err != nil {
 						log.Printf("rewrite fetch error for %s: %v", url, err)
 						p.incFetchError()
@@ -257,6 +262,9 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 				}(i, u)
 			}
 			wg.Wait()
+			for _, bad := range failed {
+				incomplete = incomplete || bad
+			}
 			for _, r := range results {
 				if r != "" {
 					bodies = append(bodies, r)
@@ -278,9 +286,10 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 
 	if body == "" {
 		return ParseOutput{
-			Content: "",
-			Headers: map[string]string{"Content-Type": "text/plain; charset=utf-8"},
-			Status:  200,
+			Incomplete: incomplete,
+			Content:    "",
+			Headers:    map[string]string{"Content-Type": "text/plain; charset=utf-8"},
+			Status:     200,
 		}, nil
 	}
 
@@ -344,7 +353,8 @@ func (p *Parser) Parse(ctx context.Context, input ParseInput) (ParseOutput, erro
 	output := p.convertModules(modules, input.TargetApp, input.Arguments)
 
 	return ParseOutput{
-		Content: output,
+		Incomplete: incomplete,
+		Content:    output,
 		Headers: map[string]string{
 			"Content-Type":                 "text/plain; charset=utf-8",
 			"Access-Control-Allow-Origin":  "*",

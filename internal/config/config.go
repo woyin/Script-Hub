@@ -66,9 +66,17 @@ type Config struct {
 	// RequestTimeout 是单次转换请求的总超时秒数，覆盖该请求内所有上游 fetch 与解析。
 	// 默认 60，避免多 URL 串行 fetch 导致单个请求长时间占用连接。
 	RequestTimeout int
-	// CacheTTL 是转换结果缓存的存活秒数；<=0 表示禁用缓存（默认）。
+	// CacheTTL 是转换结果缓存的存活秒数；<=0 表示禁用缓存。
 	// 仅缓存不含 localtext 的远程转换结果。
-	CacheTTL int
+	RefreshJobsFile          string // 后台刷新配置文件；空字符串禁用
+	RefreshStatusFile        string // 后台任务状态文件
+	RefreshJobs              []RefreshJob
+	RefreshCooldownSeconds   int
+	RefreshMaxPerMinute      int
+	CacheTTL                 int
+	CacheDir                 string // 磁盘缓存目录
+	MaxConcurrentConversions int    // 冷规则转换并发上限
+	CacheMaxBytes            int64  // 缓存容量上限（字节）
 	// SSRFBlockPrivate 控制是否拦截指向私有/保留地址的上游请求（默认 true）。
 	// 产品边界为公网规则集转换，默认开启以防内网/云元数据探测；
 	// 需要内网抓取的部署可显式设 SSRF_BLOCK_PRIVATE=false。
@@ -93,14 +101,21 @@ func LoadConfig() *Config {
 	httpTimeout := getEnvInt("HTTP_TIMEOUT", 20)
 
 	return &Config{
-		Port:             port,
-		Host:             host,
-		HTTPTimeout:      httpTimeout,
-		MaxBodyKB:        getEnvInt("PARSER_BODY_MAX", 600),
-		RequestTimeout:   getEnvInt("REQUEST_TIMEOUT", 60),
-		CacheTTL:         getEnvInt("CACHE_TTL_SECONDS", 0),
-		SSRFBlockPrivate: getEnvBool("SSRF_BLOCK_PRIVATE", true),
-		Version:          Version,
+		Port:                     port,
+		Host:                     host,
+		HTTPTimeout:              httpTimeout,
+		MaxBodyKB:                getEnvInt("PARSER_BODY_MAX", 600),
+		RequestTimeout:           getEnvInt("REQUEST_TIMEOUT", 60),
+		RefreshJobsFile:          getEnv("REFRESH_JOBS_FILE", ""),
+		RefreshStatusFile:        getEnv("REFRESH_STATUS_FILE", getEnv("CACHE_DIR", os.TempDir()+"/script-hub-cache")+"-refresh-status.json"),
+		RefreshCooldownSeconds:   getEnvInt("REFRESH_COOLDOWN_SECONDS", 60),
+		RefreshMaxPerMinute:      getEnvInt("REFRESH_MAX_PER_MINUTE", 10),
+		MaxConcurrentConversions: getEnvInt("MAX_CONCURRENT_CONVERSIONS", 2),
+		CacheDir:                 getEnv("CACHE_DIR", os.TempDir()+"/script-hub-cache"),
+		CacheMaxBytes:            int64(getEnvInt("CACHE_MAX_BYTES", 800<<20)),
+		CacheTTL:                 getEnvInt("CACHE_TTL_SECONDS", 86400),
+		SSRFBlockPrivate:         getEnvBool("SSRF_BLOCK_PRIVATE", true),
+		Version:                  Version,
 	}
 }
 
@@ -134,4 +149,11 @@ func getEnvBool(key string, fallback bool) bool {
 		}
 	}
 	return fallback
+}
+
+func (c *Config) ConversionConcurrency() int {
+	if c.MaxConcurrentConversions <= 0 {
+		return 2
+	}
+	return c.MaxConcurrentConversions
 }

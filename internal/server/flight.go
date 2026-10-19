@@ -7,18 +7,22 @@
 // 不引入 golang.org/x/sync/singleflight，保持项目零外部依赖。
 package server
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // call 代表一次进行中的单飞调用。
 type call struct {
-	wg  sync.WaitGroup
-	val any // 函数返回值（成功时）
-	err error
+	waiters int
+	done    chan struct{}
+	val     any // 函数返回值（成功时）
+	err     error
 }
 
 // singleflight 合并相同 key 的并发调用。
 type singleflight struct {
-	mu     sync.Mutex
+	mu       sync.Mutex
 	inflight map[string]*call
 }
 
@@ -29,22 +33,45 @@ func newSingleflight() *singleflight {
 // do 对 key 执行 fn。若已有相同 key 的调用在进行，则阻塞等待其结果。
 // 返回 (结果, 是否为本调用的真实执行)。
 func (g *singleflight) do(key string, fn func() (any, error)) (any, error) {
+	return g.doContext(context.Background(), key, fn)
+}
+
+func (g *singleflight) doContext(ctx context.Context, key string, fn func() (any, error)) (any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	g.mu.Lock()
 	if c, ok := g.inflight[key]; ok {
+		c.waiters++
 		g.mu.Unlock()
-		c.wg.Wait() // 复用进行中的调用
-		return c.val, c.err
+		select {
+		case <-c.done:
+			return c.val, c.err
+		case <-ctx.Done():
+			g.mu.Lock()
+			if g.inflight[key] == c {
+				c.waiters--
+				g.mu.Unlock()
+			} else {
+				g.mu.Unlock()
+				if released, ok := c.val.(interface{ Release() }); ok {
+					released.Release()
+				}
+			}
+			return nil, ctx.Err()
+		}
 	}
-	c := &call{}
-	c.wg.Add(1)
+	c := &call{done: make(chan struct{})}
 	g.inflight[key] = c
 	g.mu.Unlock()
 
 	c.val, c.err = fn()
-	c.wg.Done()
-
 	g.mu.Lock()
+	if retained, ok := c.val.(interface{ Retain(int) }); ok {
+		retained.Retain(c.waiters)
+	}
 	delete(g.inflight, key)
+	close(c.done)
 	g.mu.Unlock()
 	return c.val, c.err
 }

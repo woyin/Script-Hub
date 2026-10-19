@@ -1,10 +1,13 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,7 +21,9 @@ import (
 // newTestServerWithCfg 允许自定义配置启动服务。
 func newTestServerWithCfg(t *testing.T, cfg *config.Config) *httptest.Server {
 	t.Helper()
+	cfg.CacheDir = t.TempDir()
 	srv := New(cfg)
+	t.Cleanup(func() { srv.Shutdown(context.Background()) })
 	ts := httptest.NewServer(srv.router)
 	t.Cleanup(ts.Close)
 	return ts
@@ -210,5 +215,180 @@ func TestIntegration_SSRFBlocksLoopback(t *testing.T) {
 	}
 	if strings.Contains(body, "blocked") {
 		t.Errorf("SSRF should have blocked loopback fetch, but upstream content leaked:\n%s", body)
+	}
+}
+
+// 相同请求在 GET/POST 间共享磁盘结果；强制刷新替换同一个键，失败保留旧值。
+func TestIntegration_DiskRefreshLifecycle(t *testing.T) {
+	for _, source := range []string{"rule-set", "qx-rewrite"} {
+		t.Run(source, func(t *testing.T) {
+			var hits atomic.Int32
+			var fail atomic.Bool
+			var content atomic.Value
+			target := "surge-rule-set"
+			initial := "DOMAIN,first.example"
+			updated := "DOMAIN,second.example"
+			if source == "qx-rewrite" {
+				target = "surge-module"
+				initial = "^https?://first\\.example url reject"
+				updated = "^https?://second\\.example url reject"
+			}
+			content.Store(initial)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits.Add(1)
+				if fail.Load() {
+					w.WriteHeader(503)
+					return
+				}
+				fmt.Fprint(w, content.Load().(string))
+			}))
+			defer upstream.Close()
+			cfg := config.LoadConfig()
+			cfg.CacheDir = t.TempDir()
+			cfg.CacheTTL = 86400
+			serve := func() *httptest.Server {
+				srv := New(cfg)
+				// 本测试隔离缓存生命周期，公开限流另有专门测试。
+				srv.refreshLimit = nil
+				t.Cleanup(func() { srv.Shutdown(context.Background()) })
+				ts := httptest.NewServer(srv.router)
+				t.Cleanup(ts.Close)
+				return ts
+			}
+			ts := serve()
+			payload := fmt.Sprintf(`{"type":%q,"target":%q,"urls":[%q]}`, source, target, upstream.URL)
+			resp, first := postConvert(t, ts, payload)
+			if resp.StatusCode != 200 || !strings.Contains(first, "first") {
+				t.Fatalf("initial %d %s", resp.StatusCode, first)
+			}
+			// 通过重新构造 Server 验证进程内没有保存响应正文。
+			ts = serve()
+			path := "/file/_start_/" + url.PathEscape(upstream.URL) + "/_end_/?type=" + source + "&target=" + target
+			get := func(path string) (int, string) {
+				resp, err := http.Get(ts.URL + path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				data, _ := io.ReadAll(resp.Body)
+				return resp.StatusCode, string(data)
+			}
+			status, warm := get(path)
+			if status != 200 || warm != first || hits.Load() != 1 {
+				t.Fatalf("restart cache: %d %d %s", status, hits.Load(), warm)
+			}
+			content.Store(updated)
+			status, refreshed := get(path + "&refresh=true")
+			if status != 200 || !strings.Contains(refreshed, "second") || hits.Load() != 2 {
+				t.Fatalf("refresh: %d %d %s", status, hits.Load(), refreshed)
+			}
+			resp, body := postConvert(t, ts, payload)
+			if resp.StatusCode != 200 || body != refreshed || hits.Load() != 2 {
+				t.Fatal("refresh created a different cache key")
+			}
+			fail.Store(true)
+			status, _ = get(path + "&refresh=true")
+			if status != 500 {
+				t.Fatalf("failed refresh status %d", status)
+			}
+			before := hits.Load()
+			resp, body = postConvert(t, ts, payload)
+			if resp.StatusCode != 200 || body != refreshed || hits.Load() != before {
+				t.Fatal("failed refresh replaced good cache")
+			}
+			// POST 同样支持 args.refresh，成功刷新后普通请求复用结果。
+			fail.Store(false)
+			content.Store(initial)
+			refreshPayload := strings.TrimSuffix(payload, "}") + `,"args":{"refresh":"true"}}`
+			resp, body = postConvert(t, ts, refreshPayload)
+			if resp.StatusCode != 200 || !strings.Contains(body, "first") || hits.Load() != before+1 {
+				t.Fatalf("POST refresh: %d %s", resp.StatusCode, body)
+			}
+		})
+	}
+}
+
+func TestIntegration_PartialResultNotCached(t *testing.T) {
+	for _, source := range []string{"rule-set", "qx-rewrite"} {
+		t.Run(source, func(t *testing.T) {
+			var hits atomic.Int32
+			var fail atomic.Bool
+			fail.Store(true)
+			line := "DOMAIN,valid.example"
+			target := "surge-rule-set"
+			if source == "qx-rewrite" {
+				line = "^https?://valid\\.example url reject"
+				target = "surge-module"
+			}
+			good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, line) }))
+			defer good.Close()
+			bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits.Add(1)
+				if fail.Load() {
+					w.WriteHeader(503)
+					return
+				}
+				fmt.Fprint(w, line)
+			}))
+			defer bad.Close()
+			cfg := config.LoadConfig()
+			cfg.CacheTTL = 86400
+			ts := newTestServerWithCfg(t, cfg)
+			payload := fmt.Sprintf(`{"type":%q,"target":%q,"urls":[%q,%q]}`, source, target, good.URL, bad.URL)
+			postConvert(t, ts, payload)
+			fail.Store(false)
+			postConvert(t, ts, payload)
+			postConvert(t, ts, payload)
+			if hits.Load() != 2 {
+				t.Fatalf("upstream hits=%d, partial result must not be cached", hits.Load())
+			}
+		})
+	}
+}
+
+func TestIntegration_StreamSingleflightReaders(t *testing.T) {
+	var hits atomic.Int32
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		time.Sleep(30 * time.Millisecond)
+		fmt.Fprint(w, "payload:\n - DOMAIN,shared.example\n - DOMAIN,second.example")
+	}))
+	defer source.Close()
+	cfg := config.LoadConfig()
+	cfg.CacheTTL = 86400
+	ts := newTestServerWithCfg(t, cfg)
+	payload := fmt.Sprintf(`{"type":"rule-set","target":"surge-rule-set","urls":[%q]}`, source.URL)
+	var wg sync.WaitGroup
+	results := make(chan string, 24)
+	for i := 0; i < 24; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, body := postConvert(t, ts, payload)
+			if resp.StatusCode != 200 {
+				t.Errorf("status %d", resp.StatusCode)
+			}
+			results <- body
+		}()
+	}
+	wg.Wait()
+	close(results)
+	first := ""
+	for result := range results {
+		if !strings.Contains(result, "shared.example") || !strings.Contains(result, "second.example") {
+			t.Fatalf("incomplete file response %q", result)
+		}
+		if first == "" {
+			first = result
+		} else if first != result {
+			t.Fatal("readers shared an offset")
+		}
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("upstream hit %d times", hits.Load())
+	}
+	dirs, _ := filepath.Glob(filepath.Join(cfg.CacheDir, ".work-*"))
+	if len(dirs) != 0 {
+		t.Fatalf("workspaces not released: %v", dirs)
 	}
 }

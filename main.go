@@ -20,6 +20,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -37,7 +38,22 @@ import (
 var version = "dev"
 
 func main() {
+	checkConfig := flag.String("check-refresh-config", "", "validate a refresh jobs JSON file and exit")
+	flag.Parse()
 	cfg := config.LoadConfig()
+	path := cfg.RefreshJobsFile
+	if *checkConfig != "" {
+		path = *checkConfig
+	}
+	jobs, err := config.LoadRefreshJobs(path, cfg.CacheTTL)
+	if err != nil {
+		log.Fatalf("后台刷新配置无效: %v", err)
+	}
+	if *checkConfig != "" {
+		fmt.Printf("刷新配置有效，共 %d 个任务\n", len(jobs))
+		return
+	}
+	cfg.RefreshJobs = jobs
 
 	// 将 ldflags 注入的版本号同步到 config 包，供 /version 端点使用
 	config.SetVersion(version)

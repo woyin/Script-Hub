@@ -9,6 +9,7 @@ on:
       - "go.mod"
       - "go.sum"
       - "Dockerfile"
+      - "config/refresh-jobs.json"
       - ".github/workflows/docker.yml"
   workflow_dispatch:
 
@@ -30,6 +31,9 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+      - name: Validate refresh configuration
+        run: go run . --check-refresh-config config/refresh-jobs.json
 
       - name: Test
         run: go test -race -count=1 ./...

@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -74,9 +73,12 @@ func (s *Server) rewriteParserHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 缓存命中检查（仅对不含 localtext 的远程转换生效）
 	ck := s.cacheKey(input.SourceType, input.TargetApp, input.URLs, input.Arguments)
-	output, err := s.convertWithCache(ck, input.SourceType, input.TargetApp, func() (types.ResponseWriter, error) {
+	if queryParams["refresh"] == "true" && !s.allowPublicRefresh(w, ck) {
+		return
+	}
+	output, err := s.convertWithCacheContext(r.Context(), ck, input.SourceType, input.TargetApp, func() (types.ResponseWriter, error) {
 		return s.rewriteParser.Parse(r.Context(), input)
-	})
+	}, queryParams["refresh"] == "true")
 	if err != nil {
 		log.Printf("rewriteParser error: %v", err)
 		s.metrics.IncConversionError()
@@ -112,9 +114,12 @@ func (s *Server) ruleParserHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ck := s.cacheKey("rule-set", input.TargetApp, input.URLs, input.Arguments)
-	output, err := s.convertWithCache(ck, "rule-set", input.TargetApp, func() (types.ResponseWriter, error) {
-		return s.ruleParser.Parse(r.Context(), input)
-	})
+	if queryParams["refresh"] == "true" && !s.allowPublicRefresh(w, ck) {
+		return
+	}
+	output, err := s.convertWithCacheContext(r.Context(), ck, "rule-set", input.TargetApp, func() (types.ResponseWriter, error) {
+		return s.parseRules(r.Context(), input, ck)
+	}, queryParams["refresh"] == "true")
 	if err != nil {
 		log.Printf("ruleParser error: %v", err)
 		s.metrics.IncConversionError()
@@ -140,7 +145,7 @@ func writeBody(w http.ResponseWriter, status int, headers map[string]string, bod
 // 对应 JS 版 service.js 中的 ctx.body 替换逻辑。
 func writeResponse(w http.ResponseWriter, output types.ResponseWriter, r *http.Request) {
 	resp := output.GetResponse()
-	writeBody(w, resp.Status, resp.Headers, resp.Body, baseURLFromRequest(r))
+	sendResponse(w, resp, baseURLFromRequest(r), true)
 }
 
 // decodeReqArr 解码请求 URL 数组。
@@ -210,12 +215,7 @@ func baseURLFromRequest(r *http.Request) string {
 }
 
 // convertRequest 是 POST /api/convert 的 JSON 请求体。
-type convertRequest struct {
-	URLs   []string          `json:"urls,omitempty"`
-	Type   string            `json:"type"`
-	Target string            `json:"target,omitempty"`
-	Args   map[string]string `json:"args,omitempty"`
-}
+type convertRequest = config.RefreshRequest
 
 // convertErrorResponse 是 API 错误响应的 JSON 结构。
 type convertErrorResponse struct {
@@ -298,6 +298,10 @@ func (s *Server) convertAPIHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if args["refresh"] == "true" && !s.allowPublicRefresh(w, s.refreshKey(req, args)) {
+		return
+	}
+
 	// 端到端超时，与 fileHandler 行为一致。
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.cfg.RequestTimeout)*time.Second)
 	defer cancel()
@@ -309,12 +313,13 @@ func (s *Server) convertAPIHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := output.GetResponse()
+	headers := make(map[string]string, len(resp.Headers)+1)
 	for k, v := range resp.Headers {
-		w.Header().Set(k, v)
+		headers[k] = v
 	}
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.WriteHeader(resp.Status)
-	w.Write([]byte(resp.Body))
+	headers["Access-Control-Allow-Origin"] = "*"
+	resp.Headers = headers
+	sendResponse(w, resp, "", false)
 }
 
 // runConvert 按 sourceType 选择解析器并执行转换。
@@ -333,9 +338,9 @@ func (s *Server) runConvert(ctx context.Context, req convertRequest, args map[st
 			TargetApp:  req.Target,
 			Arguments:  args,
 		}
-		out, err := s.convertWithCache(ck, req.Type, req.Target, func() (types.ResponseWriter, error) {
+		out, err := s.convertWithCacheContext(ctx, ck, req.Type, req.Target, func() (types.ResponseWriter, error) {
 			return s.rewriteParser.Parse(ctx, input)
-		})
+		}, args["refresh"] == "true")
 		if err != nil {
 			log.Printf("api rewriteParser error: %v", err)
 			s.metrics.IncConversionError()
@@ -343,20 +348,20 @@ func (s *Server) runConvert(ctx context.Context, req convertRequest, args map[st
 		}
 		return out, 0
 	case config.SourceTypeRuleSet:
-		ck := s.cacheKey("rule-set", req.Target, req.URLs, args)
 		target := req.Target
 		if target == "" || target == "rule-set" {
 			// API 无 UA 可推断，target 为空时退化为 surge-rule-set。
 			target = "surge-rule-set"
 		}
+		ck := s.cacheKey("rule-set", target, req.URLs, args)
 		input := rule.ParseInput{
 			URLs:      req.URLs,
 			TargetApp: target,
 			Arguments: args,
 		}
-		out, err := s.convertWithCache(ck, "rule-set", req.Target, func() (types.ResponseWriter, error) {
-			return s.ruleParser.Parse(ctx, input)
-		})
+		out, err := s.convertWithCacheContext(ctx, ck, "rule-set", req.Target, func() (types.ResponseWriter, error) {
+			return s.parseRules(ctx, input, ck)
+		}, args["refresh"] == "true")
 		if err != nil {
 			log.Printf("api ruleParser error: %v", err)
 			s.metrics.IncConversionError()
@@ -375,40 +380,127 @@ func writeAPIError(w http.ResponseWriter, status int, msg string) {
 	_ = json.NewEncoder(w).Encode(convertErrorResponse{Error: msg})
 }
 
-// convertWithCache 统一处理"查缓存 → 未命中则执行 parse（受 singleflight 保护）→ 写缓存"。
-// source/target 用于递增按维度的转换计数；命中和未命中都计数。
-// ck 为空串（含 localtext 或缓存禁用）时直接执行 parse，不走缓存与 singleflight。
-func (s *Server) convertWithCache(ck, source, target string, parse func() (types.ResponseWriter, error)) (types.ResponseWriter, error) {
-	// 不可缓存：直接执行
-	if ck == "" {
-		return parse()
+func (r conversionResult) Retain(n int) {
+	if r.output != nil {
+		if f := r.output.GetResponse().File; f != nil {
+			f.Retain(n)
+		}
 	}
-	// 缓存命中：先做类型断言，仅当命中且类型正确才计 hit 并返回。
-	// 断言失败（理论上不会发生——cache 只写 cachedResp 一种类型）时
-	// fall-through 到 miss 路径，避免同时计 hit+miss 导致计数错乱。
-	if cached, ok := s.cache.Get(ck); ok {
-		if cr, ok := cached.(cachedResp); ok {
+}
+
+func (r conversionResult) Release() {
+	if r.output != nil {
+		if f := r.output.GetResponse().File; f != nil {
+			f.Close()
+		}
+	}
+}
+
+type conversionResult struct {
+	output    types.ResponseWriter
+	fromCache bool
+	stored    bool
+}
+
+// convertWithCache 统一处理磁盘缓存、并发合并与强制刷新。
+// ck 为空串时跳过缓存；强制刷新复用原键。
+func (s *Server) convertWithCache(ck, source, target string, parse func() (types.ResponseWriter, error), refresh ...bool) (types.ResponseWriter, error) {
+	return s.convertWithCacheContext(context.Background(), ck, source, target, parse, refresh...)
+}
+func (s *Server) convertWithCacheContext(ctx context.Context, ck, source, target string, parse func() (types.ResponseWriter, error), refresh ...bool) (types.ResponseWriter, error) {
+	if ck == "" {
+		out, err := parse()
+		if err != nil || out == nil {
+			return out, err
+		}
+		return withCacheStatus(out, "BYPASS"), nil
+	}
+	force := len(refresh) > 0 && refresh[0]
+	read := func() (types.ResponseWriter, bool) {
+		rd, ok := s.cache.Get(ck)
+		if !ok {
+			return nil, false
+		}
+		return rd, true
+	}
+	if !force {
+		if out, ok := read(); ok {
 			s.metrics.IncCacheHit()
 			s.metrics.IncConversion(source, target)
-			return cr, nil
+			return withCacheStatus(out, "HIT"), nil
 		}
 	}
 	s.metrics.IncCacheMiss()
-	// singleflight 合并同 key 并发，防缓存击穿：首个请求执行 parse，
-	// 其余复用其结果（成功后首个已写入缓存，其余随后从缓存读）。
-	out, err := s.flight.do(ck, func() (any, error) {
-		o, e := parse()
-		if e == nil && o != nil {
+	var shared conversionResult
+	for {
+		out, err := s.flight.doContext(ctx, ck, func() (any, error) {
+			// 再次检查，避免缓存填充与新一轮并发调用之间重复转换。
+			if !force {
+				if out, ok := read(); ok {
+					return conversionResult{output: out, fromCache: true}, nil
+				}
+			}
+			o, e := parse()
+			if e != nil {
+				return nil, e
+			}
+			if o == nil {
+				return nil, errors.New("conversion returned no response")
+			}
 			rd := o.GetResponse()
-			s.cache.Set(ck, cachedResp{status: rd.Status, headers: rd.Headers, body: rd.Body})
+			if rd.Incomplete || rd.Status != http.StatusOK {
+				if force {
+					if rd.File != nil {
+						rd.File.Close()
+					}
+					return nil, errors.New("refresh failed: incomplete conversion")
+				}
+				return conversionResult{output: o}, nil
+			}
+			if err := s.cache.Set(ck, rd); err != nil {
+				log.Printf("缓存写入失败: %v", err)
+				return conversionResult{output: o}, nil
+			}
+			return conversionResult{output: o, stored: true}, nil
+		})
+		if err != nil {
+			return nil, err
 		}
-		return o, e
-	})
-	if err != nil {
-		return nil, err
+		shared = out.(conversionResult)
+		// 强制请求若复用了普通请求的二次缓存检查，需要再执行一次刷新。
+		if force && shared.fromCache {
+			if f := shared.output.GetResponse().File; f != nil {
+				f.Close()
+			}
+			continue
+		}
+		break
 	}
+	if force && !shared.stored {
+		if f := shared.output.GetResponse().File; f != nil {
+			f.Close()
+		}
+		return nil, errors.New("refresh failed: result was not cached")
+	}
+	result := shared.output
 	s.metrics.IncConversion(source, target)
-	return out.(types.ResponseWriter), nil
+	state := "MISS"
+	if force {
+		state = "REFRESH"
+	}
+	return withCacheStatus(result, state), nil
+}
+
+// 缓存状态只写入当前响应，不保存到磁盘文件。
+func withCacheStatus(out types.ResponseWriter, state string) types.ResponseWriter {
+	rd := out.GetResponse()
+	headers := make(map[string]string, len(rd.Headers)+1)
+	for k, v := range rd.Headers {
+		headers[k] = v
+	}
+	headers["X-ScriptHub-Cache"] = state
+	rd.Headers = headers
+	return rd
 }
 
 // statusForError 将解析器返回的错误映射为合适的 HTTP 状态码。
@@ -434,33 +526,21 @@ func (s *Server) cacheKey(sourceType, target string, urls []string, args map[str
 	if len(urls) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString(sourceType)
-	b.WriteByte('|')
-	b.WriteString(target)
-	b.WriteByte('|')
-	for i, u := range urls {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteString(u)
-	}
-	// args 中除 localtext 外的参数会影响输出，需纳入 key。
-	// 按固定顺序拼接以保证可重复。
-	keys := make([]string, 0, len(args))
-	for k := range args {
-		if k != "localtext" {
-			keys = append(keys, k)
+	// JSON 保留 URL 顺序、转义分隔符，并稳定排序参数键。
+	params := make(map[string]string, len(args))
+	for k, v := range args {
+		if k != "localtext" && k != "refresh" && k != "type" && k != "target" {
+			params[k] = v
 		}
 	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		b.WriteByte('|')
-		b.WriteString(k)
-		b.WriteByte('=')
-		b.WriteString(args[k])
-	}
-	return b.String()
+	key, _ := json.Marshal(struct {
+		Version string
+		Source  string
+		Target  string
+		URLs    []string
+		Args    map[string]string
+	}{s.cfg.Version, sourceType, target, urls, params})
+	return string(key)
 }
 
 // metricsHandler 输出 Prometheus 文本格式的运行时指标。
@@ -524,4 +604,33 @@ func (s *Server) formatsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	_ = json.NewEncoder(w).Encode(supportedFormats)
+}
+
+// parseRules 限制冷转换并发；磁盘不可用时保留受输入大小限制的旧路径。
+func (s *Server) parseRules(ctx context.Context, input rule.ParseInput, key string) (types.ResponseWriter, error) {
+	select {
+	case s.conversions <- struct{}{}:
+		defer func() { <-s.conversions }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if s.cache != nil {
+		workspace, err := s.cache.Workspace(key)
+		if err == nil {
+			return s.ruleParser.ParseStream(ctx, input, workspace)
+		}
+		if ctx.Value(backgroundRefreshKey{}) != nil {
+			return nil, errors.New("background temporary space unavailable")
+		}
+		log.Printf("流式转换临时空间不可用，使用兼容路径: %v", err)
+	}
+	return s.ruleParser.Parse(ctx, input)
+}
+
+func (s *Server) refreshKey(req convertRequest, args map[string]string) string {
+	target := req.Target
+	if req.Type == config.SourceTypeRuleSet && (target == "" || target == "rule-set") {
+		target = config.TargetSurgeRuleSet
+	}
+	return s.cacheKey(req.Type, target, req.URLs, args)
 }

@@ -15,3 +15,10 @@
 
 ---
 ⚠️ **自指声明**: 当本文件夹内容变化时（新增/删除/重命名文件），请更新此索引
+
+磁盘缓存配置：`CACHE_TTL_SECONDS`（86400 秒）、`CACHE_DIR`（系统临时目录下的 script-hub-cache）、`CACHE_MAX_BYTES`（800 MiB）。
+
+`MAX_CONCURRENT_CONVERSIONS`：冷规则转换并发上限，默认 2；≤0 使用默认值。
+
+### refresh.go / refresh_test.go
+- 后台任务 JSON 数据类型及严格验证：任务标识、周期、缓存 TTL、来源格式、目标格式、URL 与保留参数。`LoadRefreshJobs` 用于启动及独立校验。
