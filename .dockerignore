@@ -35,3 +35,10 @@ vendor/
 # ── OS 杂项 ──
 .DS_Store
 Thumbs.db
+
+# Local management secrets must never enter the Docker build context.
+.env
+.env.*
+
+# Runtime subscriptions and file contents are private data, not build input.
+data/

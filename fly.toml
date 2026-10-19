@@ -3,6 +3,7 @@ primary_region = "sin"
 
 [env]
   CACHE_DIR = "/data/cache"
+  MANAGER_DATA_DIR = "/data/manager"
   CACHE_TTL_SECONDS = "86400"
   CACHE_MAX_BYTES = "838860800"
   MAX_CONCURRENT_CONVERSIONS = "35"
@@ -17,7 +18,7 @@ primary_region = "sin"
   initial_size = "1gb"
 
 [build]
-  image = "ghcr.io/woyin/script-hub/script-hub:1.0-beta"
+  image = "ghcr.io/woyin/script-hub/script-hub:1.1-beta"
 
 # 部署时上传本地任务清单；只修改清单不需要重新构建镜像。
 [[files]]

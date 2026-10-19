@@ -42,3 +42,9 @@ handler.go 是业务协调点，依次调用 frontend、rewrite、rule 三个子
 
 ### flight_test.go
 - 验证等待同键工作的请求可取消，并正确释放共享文件引用。
+
+## 私有管理接入
+
+- `server.go` 根据管理密钥初始化 `internal/manager`，注入 SSRF 受控下载和磁盘缓存；配置或存储错误时拒绝启动。
+- `router.go` 仅在模块启用时注册 `/manage/*` 和 `/share/*`，不改变公开转换入口。
+- `manager_test.go` 验证默认关闭、错误配置拒绝启动、私有管理路由及真实下载 SSRF 拦截。

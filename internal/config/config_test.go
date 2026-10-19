@@ -172,3 +172,24 @@ func TestLoadConfig_CacheOverrides(t *testing.T) {
 		t.Fatalf("unexpected cache config: %+v", cfg)
 	}
 }
+
+func TestManagementEnvironment(t *testing.T) {
+	t.Setenv("MANAGER_BACKEND_KEY", "")
+	t.Setenv("MANAGER_DATA_DIR", "")
+	t.Setenv("MANAGER_MAX_BYTES", "")
+	t.Setenv("MANAGER_SOURCE_MAX_KB", "")
+	t.Setenv("MANAGER_CONCURRENCY", "")
+	cfg := LoadConfig()
+	if cfg.ManagerBackendKey != "" || cfg.ManagerMaxBytes != 32<<20 || cfg.ManagerSourceMaxKB != 8192 || cfg.ManagerConcurrency != 2 {
+		t.Fatal("unsafe management defaults")
+	}
+	t.Setenv("MANAGER_BACKEND_KEY", "test-backend-key")
+	t.Setenv("MANAGER_DATA_DIR", "/data/manager")
+	t.Setenv("MANAGER_MAX_BYTES", "12345")
+	t.Setenv("MANAGER_SOURCE_MAX_KB", "1024")
+	t.Setenv("MANAGER_CONCURRENCY", "3")
+	cfg = LoadConfig()
+	if cfg.ManagerBackendKey != "test-backend-key" || cfg.ManagerDataDir != "/data/manager" || cfg.ManagerMaxBytes != 12345 || cfg.ManagerSourceMaxKB != 1024 || cfg.ManagerConcurrency != 3 {
+		t.Fatal("management overrides ignored")
+	}
+}

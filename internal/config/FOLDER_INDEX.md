@@ -22,3 +22,5 @@
 
 ### refresh.go / refresh_test.go
 - 后台任务 JSON 数据类型及严格验证：任务标识、周期、缓存 TTL、来源格式、目标格式、URL 与保留参数。`LoadRefreshJobs` 用于启动及独立校验。
+
+私有管理环境变量：`MANAGER_BACKEND_KEY`、`MANAGER_DATA_DIR`、`MANAGER_MAX_BYTES`、`MANAGER_SOURCE_MAX_KB`、`MANAGER_CONCURRENCY`；密钥空值关闭模块。

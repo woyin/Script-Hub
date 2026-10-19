@@ -23,6 +23,10 @@ import (
 // setupRoutes 设置全捕获路由，将所有请求转发到 dispatchHandler。
 func (s *Server) setupRoutes() {
 	// 语义化 API 端点优先注册，chi 按注册顺序精确匹配优先于 /* 全捕获。
+	if s.management != nil {
+		s.router.Handle("/manage/*", s.management)
+		s.router.Handle("/share/*", s.management)
+	}
 	s.router.Post("/api/convert", s.convertAPIHandler)
 	s.router.Get("/api/convert", s.convertAPIHelpHandler)
 	s.router.Get("/formats", s.formatsHandler)

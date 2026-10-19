@@ -10,6 +10,8 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"sync"
@@ -18,6 +20,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/script-hub-org/script-hub/internal/cache"
 	"github.com/script-hub-org/script-hub/internal/config"
+	"github.com/script-hub-org/script-hub/internal/httpclient"
+	"github.com/script-hub-org/script-hub/internal/manager"
 	"github.com/script-hub-org/script-hub/internal/metrics"
 	"github.com/script-hub-org/script-hub/internal/rewrite"
 	"github.com/script-hub-org/script-hub/internal/rule"
@@ -25,6 +29,8 @@ import (
 
 // Server 是 Script Hub HTTP 服务的核心结构。
 type Server struct {
+	management   *manager.Handler
+	startupErr   error
 	httpServer   *http.Server
 	router       *chi.Mux
 	cfg          *config.Config
@@ -83,6 +89,27 @@ func New(cfg *config.Config) *Server {
 			}
 		}
 	}()
+	if cfg.ManagerBackendKey != "" {
+		if err != nil {
+			s.startupErr = fmt.Errorf("management requires a writable output cache")
+		} else {
+			sourceMaxKB := cfg.ManagerSourceMaxKB
+			if sourceMaxKB <= 0 {
+				sourceMaxKB = 8192
+			}
+			client := httpclient.NewClient(cfg.HTTPTimeout, sourceMaxKB)
+			s.management, s.startupErr = manager.New(manager.Config{BackendKey: cfg.ManagerBackendKey, DataDir: cfg.ManagerDataDir, CacheDir: cfg.CacheDir, MaxBytes: cfg.ManagerMaxBytes, SourceMaxBytes: int64(sourceMaxKB) * 1024, Concurrency: cfg.ManagerConcurrency, Timeout: time.Duration(cfg.RequestTimeout) * time.Second, Version: cfg.Version, Cache: diskCache, Fetch: func(ctx context.Context, source string, headers map[string]string, dst io.Writer) error {
+				status, err := client.GetTo(ctx, source, headers, dst)
+				if err != nil {
+					return err
+				}
+				if status != http.StatusOK {
+					return fmt.Errorf("source HTTP failure")
+				}
+				return nil
+			}})
+		}
+	}
 	s.refresher = newRefreshScheduler(s)
 	s.setupRoutes()
 	return s
@@ -102,6 +129,9 @@ func New(cfg *config.Config) *Server {
 // 唯一控制。body 阶段的 slowloris 由 convertAPIHandler 的 maxReqBody=2MiB +
 // io.LimitReader 封死；GET 端点无 body，不存在慢 body 风险。
 func (s *Server) Start(addr string) error {
+	if s.startupErr != nil {
+		return s.startupErr
+	}
 	s.refresher.start()
 	s.httpServer = &http.Server{
 		Addr:              addr,

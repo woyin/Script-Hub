@@ -33,6 +33,15 @@ Script Hub（Go 重写版）是一个代理规则与脚本转换服务，完整�
 - **核心文件**: config.go
 - [详见 FOLDER_INDEX.md](internal/config/FOLDER_INDEX.md)
 
+### internal/manager
+- 私有订阅/文件 CRUD、独立永久数据存储、Backend URL 管理鉴权、资源级分享 token、私有导出缓存与操作页面。
+- [详见 FOLDER_INDEX.md](internal/manager/FOLDER_INDEX.md)
+
+### internal/subscription
+- Clash YAML、URI/Base64 节点输入、处理和 Clash/Shadowrocket/Loon/Egern 输出，严格拒绝无法保留的字段。
+- [详见 FOLDER_INDEX.md](internal/subscription/FOLDER_INDEX.md)
+- [设计计划](docs/native-substore-plan.md)
+
 ### internal/frontend
 - **地位**: UI 层
 - **功能**: 内嵌 HTML 转换页面，注入 baseURL
@@ -213,6 +222,7 @@ graph TB
 
 - **语言**: Go 1.25
 - **HTTP 路由**: github.com/go-chi/chi/v5
+- **节点 YAML**: gopkg.in/yaml.v3
 - **前端**: 内嵌 HTML（//go:embed）
 - **部署**: 单二进制，默认 0.0.0.0:9100
 

@@ -77,6 +77,11 @@ type Config struct {
 	CacheDir                 string // 磁盘缓存目录
 	MaxConcurrentConversions int    // 冷规则转换并发上限
 	CacheMaxBytes            int64  // 缓存容量上限（字节）
+	ManagerBackendKey        string // 空值禁用私有订阅/文件管理
+	ManagerDataDir           string
+	ManagerMaxBytes          int64
+	ManagerSourceMaxKB       int
+	ManagerConcurrency       int
 	// SSRFBlockPrivate 控制是否拦截指向私有/保留地址的上游请求（默认 true）。
 	// 产品边界为公网规则集转换，默认开启以防内网/云元数据探测；
 	// 需要内网抓取的部署可显式设 SSRF_BLOCK_PRIVATE=false。
@@ -114,6 +119,11 @@ func LoadConfig() *Config {
 		CacheDir:                 getEnv("CACHE_DIR", os.TempDir()+"/script-hub-cache"),
 		CacheMaxBytes:            int64(getEnvInt("CACHE_MAX_BYTES", 800<<20)),
 		CacheTTL:                 getEnvInt("CACHE_TTL_SECONDS", 86400),
+		ManagerBackendKey:        getEnv("MANAGER_BACKEND_KEY", ""),
+		ManagerDataDir:           getEnv("MANAGER_DATA_DIR", "data/manager"),
+		ManagerMaxBytes:          int64(getEnvInt("MANAGER_MAX_BYTES", 32<<20)),
+		ManagerSourceMaxKB:       getEnvInt("MANAGER_SOURCE_MAX_KB", 8192),
+		ManagerConcurrency:       getEnvInt("MANAGER_CONCURRENCY", 2),
 		SSRFBlockPrivate:         getEnvBool("SSRF_BLOCK_PRIVATE", true),
 		Version:                  Version,
 	}

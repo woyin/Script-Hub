@@ -41,6 +41,7 @@ vendor/
 
 .env
 .env.*
+!.env.example
 
 ############################
 # Logs
@@ -58,3 +59,6 @@ skills-lock.json
 
 # Downloaded refresh task status
 refresh-status.json
+
+# Default private management data (never commit subscriptions/credentials).
+/data/

@@ -47,7 +47,7 @@ docker run --rm -p 9100:9100 ghcr.io/woyin/script-hub/script-hub:latest
 
 仓库内 `fly.toml` 使用 `breestealth-scripthub-go`、新加坡区域和 9100 端口。Fly.io 健康检查请求 `GET /healthz`。
 
-`[build].image` 指向 GitHub Actions 已发布的 `ghcr.io/woyin/script-hub/script-hub:1.0-beta`，部署只拉取现成镜像，不在本地或 Fly builder 再次编译。版本 Git 标签为 `v1.0.0-beta`，镜像同时发布 `1.0-beta`、`1.0.0-beta`、`v1.0.0-beta` 和 `latest`。`latest` 随后续主分支构建更新；需要固定此 beta 时使用 `1.0-beta`。正式部署前等待对应镜像工作流成功。
+`[build].image` 指向 GitHub Actions 已发布的 `ghcr.io/woyin/script-hub/script-hub:1.1-beta`，部署只拉取现成镜像，不在本地或 Fly builder 再次编译。版本 Git 标签为 `v1.1.1-beta`，镜像同时发布 `1.1-beta`、`1.1.1-beta`、`v1.1.1-beta` 和 `latest`。`latest` 随后续主分支构建更新；需要固定此 beta 时使用 `1.1-beta`。正式部署前等待对应镜像工作流成功。
 
 部署前创建同区域的 1 GB Volume（已有同名卷时不要重复创建）：
 
@@ -107,6 +107,11 @@ fly status
 | `REFRESH_STATUS_FILE` | `CACHE_DIR` 后加 `-refresh-status.json` | 脱敏任务状态文件；Fly 为 `/data/refresh-status.json` |
 | `REFRESH_COOLDOWN_SECONDS` | `60` | 公开同键刷新冷却秒数；≤0 使用默认，最大 86400 |
 | `REFRESH_MAX_PER_MINUTE` | `10` | 实例公开强制刷新频率；≤0 使用默认，最大 1000 |
+| `MANAGER_BACKEND_KEY` | 空 | 私有管理密钥，32–128 个随机 URL 安全字符；空值关闭功能，通过环境变量或 Fly Secrets 注入 |
+| `MANAGER_DATA_DIR` | `data/manager` | 永久资源存储目录；Fly 为 `/data/manager`，必须与缓存目录隔离 |
+| `MANAGER_MAX_BYTES` | `33554432` | 永久资源文件总预算，包含原子更新时旧文件和新文件共存的实际字节 |
+| `MANAGER_SOURCE_MAX_KB` | `8192` | 远程文件或单次合并订阅的来源总大小上限，最大 8192 KiB |
+| `MANAGER_CONCURRENCY` | `2` | 私有节点/文件导出并发，1–35；独立于规则转换并发，≤0 使用默认值 |
 | `SSRF_BLOCK_PRIVATE` | `true` | 拦截指向私有/保留地址的上游请求（防 SSRF）。设为 `false` 时放行内网抓取 |
 
 ### 磁盘缓存与强制刷新
@@ -167,7 +172,7 @@ fly status
 # 使用 GitHub Actions 已生成的镜像校验，不执行本地编译。
 docker run --rm \
   -v "$PWD/config/refresh-jobs.json:/config/refresh-jobs.json:ro" \
-  ghcr.io/woyin/script-hub/script-hub:1.0-beta \
+  ghcr.io/woyin/script-hub/script-hub:1.1-beta \
   --check-refresh-config /config/refresh-jobs.json
 fly deploy --ha=false
 ```
@@ -322,3 +327,71 @@ go vet ./...
 原项目及其贡献者的版权归各自权利人所有。本说明不构成原作者对本项目的背书，也不取代 `LICENSE` 正文。
 
 SPDX-License-Identifier: `GPL-3.0-only`
+
+
+## 原生订阅与文件管理
+
+设计与实施范围见 [详细计划](docs/native-substore-plan.md)。本模块使用 Go，不启动 Node，不运行 JavaScript 处理脚本，也不兼容 Sub-Store 原有前端/备份格式；流量/到期信息展示、节点测活、定时同步和完整配置模板不在首版范围。现有公开规则转换入口保持原状。
+
+支持本地或远程订阅、多来源合并、名称筛选、正则改名、去重和排序。输入为 Clash YAML、节点 URI 或 Base64 URI；输出为 Clash `proxies` 节点订阅、Shadowrocket 标准 URI 的 Base64、Loon `[Proxy]` 文本或 Egern 原生 YAML。这些输出不包含完整策略组和分流规则。兼容性按协议与具体字段判断；未知或不能保留的字段使整个导出失败，不静默删节点或参数。管理页可查看能力说明。
+
+文件支持本地文本及单个远程 URL，可导出、分享、轮换链接和撤销分享。所有文件按纯文本返回，不执行 HTML 或脚本。分享 token 只保存摘要，客户端不能通过分享链接管理资源或强制刷新。
+
+### 启用管理入口
+
+默认关闭。先生成至少 32 个随机 URL 安全字符，例如 `openssl rand -hex 32`，保存在本地 `.env` 的 `MANAGER_BACKEND_KEY` 中。不要使用示例密钥，不要提交 `.env`，不要把 Backend URL 当作分享链接。
+
+使用仓库的 `.env.example` 作为配置样板。Docker 可通过 `--env-file .env` 注入配置，并将 `/data` 挂载到持久卷。`.env` 已被 Git 和 Docker 构建上下文排除。程序读取进程环境变量，不自动加载 `.env`。
+
+```bash
+docker run --rm -p 9100:9100 --env-file .env \
+  -v script-hub-data:/data ghcr.io/woyin/script-hub/script-hub:latest
+```
+
+Fly 使用自己的密钥管理：
+
+```bash
+# .env 内只放准备上传到 Fly 的环境变量和秘密；不要提交该文件。
+fly secrets import < .env
+# 等待包含本功能的 GitHub Actions 镜像发布成功后，直接部署现成镜像。
+fly deploy --image ghcr.io/woyin/script-hub/script-hub:1.1-beta --ha=false
+```
+
+`1.1-beta` 包含管理模块；旧的 `1.0-beta` 不包含。部署直接使用 Actions 发布的镜像，无需本地重新编译。
+
+管理地址是 `https://你的域名/manage/<MANAGER_BACKEND_KEY>/`。这是持有 URL 即可管理的单管理员模式；浏览器历史和反向代理访问日志也应按敏感信息处理。页面可以创建、编辑、删除订阅和文件，选择导出目标、强制更新产物、生成或撤销分享链接。密钥错误返回 404；管理入口不开放通配 CORS。管理和分享响应均设置 `no-store` 与 `no-referrer`。
+
+### 存储、缓存与资源边界
+
+资源保存到 `MANAGER_DATA_DIR`，目录权限 0700、资源 JSON 权限 0600。写入通过临时文件和原子替换完成，失败保留旧资源。默认最多 256 个资源，单份管理请求和资源文档最大 8 MiB，合并最多 16 个来源、10000 个节点。私有持久数据不参与缓存淘汰，也不能放进 `/data/cache`；启动时会校验目录重叠（包含符号链接）。需要自行备份管理数据，规则缓存则可以重建。
+
+远程读取复用 SSRF、解压后大小限制和超时。任何来源失败都会中止导出，不输出部分订阅。导出产物复用磁盘结果缓存，缓存 TTL 与 `CACHE_TTL_SECONDS` 一致；资源更新自动更换缓存键。撤销分享先通过权限检查阻断，即使磁盘缓存还存在也不能读取。管理员可强制更新，失败保留原有有效缓存。
+
+节点解析、去重和排序需要内存，不能直接沿用规则流式转换的内存结论，因此私有导出有独立的 `MANAGER_CONCURRENCY`。本轮自动测试不代表已完成实际客户端导入、握手或连通性验收，尤其是 Shadowrocket 的专有参数、Reality/特殊传输组合。遇到未实现参数时会明确报错；需要实际节点样本后再逐项补齐。
+
+### 管理接口
+
+以下接口位于 `/manage/<key>` 下，写操作要求 `Content-Type: application/json`：
+
+| 路径 | 方法 | 用途 |
+|---|---|---|
+| `/api/subscriptions`、`/api/files` | GET / POST | 列表 / 创建 |
+| `/api/subscriptions/{id}`、`/api/files/{id}` | GET / PUT / DELETE | 详情 / 替换配置 / 删除 |
+| `/api/{kind}/{id}/export?target=clash` | GET | 导出；管理员可加 `refresh=true` |
+| `/api/{kind}/{id}/share` | POST / DELETE | 生成或轮换分享 / 撤销 |
+| `/api/capabilities` | GET | 输入、输出及兼容范围 |
+
+创建/修改请求是资源配置，例如：
+
+```json
+{
+  "name": "我的订阅",
+  "source": "remote",
+  "urls": ["https://example.com/subscription"],
+  "processing": {"exclude": "剩余|到期", "deduplicate": true, "sort": true}
+}
+```
+
+本地来源使用 `"source":"local"` 与 `content`，不填写 `urls` 和 `headers`。远程来源可用 `headers` 配置请求头。文件不接受节点 `processing`。
+
+创建响应包含资源 `id`、`spec` 和更新时间。分享接口只在生成时返回 `path`，例如 `/share/subscriptions/<id>/<token>`；客户端可追加 `?target=clash|shadowrocket|uri|loon|egern`。文件分享直接返回文本。轮换分享后旧 token 立即失效；已开始发送的响应不会被中途截断。
