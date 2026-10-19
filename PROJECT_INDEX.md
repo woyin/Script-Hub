@@ -250,7 +250,7 @@ PORT=8080 go run main.go
 
 ## 后台定时刷新
 
-- `config/refresh-jobs.json`：25 个远程源 × 3 个目标格式的 75 个启用任务，每 21600 秒刷新；启动加载，修改后重新部署。
+- `config/refresh-jobs.json`：25 个远程源 × 3 个目标格式的 75 个启用任务，每 21600 秒刷新；启动加载；Fly 通过 `[[files]]` 上传当前清单，修改后重新部署，无需重建镜像。
 - `internal/config/refresh.go`：严格校验；入口支持 `--check-refresh-config`。
 - `internal/server/refresh_jobs.go`：单任务调度、复用转换缓存、退避及 Volume 状态记录。
 - `internal/server/refresh_limit.go`：公开强刷默认同键 60 秒、实例每分钟 10 次，不限制普通读取。

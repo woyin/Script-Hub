@@ -100,6 +100,7 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Script Hub ${{ steps.version.outputs.tag }}
           generate_release_notes: true
+          prerelease: ${{ contains(steps.version.outputs.tag, '-') }}
           files: |
             artifacts/script-hub-*
             artifacts/checksums-sha256.txt

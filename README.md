@@ -47,6 +47,8 @@ docker run --rm -p 9100:9100 ghcr.io/woyin/script-hub/script-hub:latest
 
 仓库内 `fly.toml` 使用 `breestealth-scripthub-go`、新加坡区域和 9100 端口。Fly.io 健康检查请求 `GET /healthz`。
 
+`[build].image` 指向 GitHub Actions 已发布的 `ghcr.io/woyin/script-hub/script-hub:1.0-beta`，部署只拉取现成镜像，不在本地或 Fly builder 再次编译。版本 Git 标签为 `v1.0.0-beta`，镜像同时发布 `1.0-beta`、`1.0.0-beta`、`v1.0.0-beta` 和 `latest`。`latest` 随后续主分支构建更新；需要固定此 beta 时使用 `1.0-beta`。正式部署前等待对应镜像工作流成功。
+
 部署前创建同区域的 1 GB Volume（已有同名卷时不要重复创建）：
 
 ```bash
@@ -55,6 +57,8 @@ fly volumes create scripthub_cache --region sin --size 1 --scheduled-snapshots=f
 fly deploy --ha=false
 fly status
 ```
+
+`fly.toml` 的 `[[files]]` 会将当前仓库的 `config/refresh-jobs.json` 上传到 `/config/refresh-jobs.json`，并通过 `REFRESH_JOBS_FILE` 交给后台调度器。JSON 是定时刷新任务清单；程序据此定时下载规则、转换并更新缓存，无需定时生成 JSON。镜像也包含构建时的默认清单，供普通 Docker 部署使用；Fly 部署以本地上传的清单为准。
 
 `fly.toml` 将卷挂载到 `/data`，缓存目录为 `/data/cache`。磁盘缓存仅由一个服务进程管理；多实例应分别挂载自己的 Volume。缓存可以重建，无需快照备份。
 
@@ -115,11 +119,11 @@ fly status
 
 响应头 `X-ScriptHub-Cache`：`HIT` 表示命中，`MISS` 表示未命中，`REFRESH` 表示强制刷新成功，`BYPASS` 表示未使用缓存。普通请求写缓存失败时仍返回转换结果并记录日志；强制刷新写入失败则返回错误。同键并发转换合并执行。
 
-每 10 分钟清理一次过期文件；空间不足时按需清理。空间不足时先清理过期文件，再淘汰最早生成的结果。预算包含原子替换期间新旧文件共存的空间，也包含仍在发送的旧文件及转换临时空间。正在读取的文件不作为容量淘汰对象。服务重启后可读取已有缓存；目录不可写时记录日志并禁用缓存，转换继续运行。后台定时刷新通过下述 JSON 清单配置。
+每 10 分钟清理一次过期文件；空间不足时按需清理。空间不足时先清理过期文件，再淘汰最早生成的结果。预算包含原子替换期间新旧文件共存的空间，也包含仍在发送的旧文件及转换临时空间。正在读取的文件不作为容量淘汰对象。服务重启后可读取已有缓存；目录不可写时记录日志，规则转换返回 503，避免自动回退全内存。后台定时刷新通过下述 JSON 清单配置。
 
 ### 后台定时刷新配置
 
-编辑仓库内 `config/refresh-jobs.json`。Docker 镜像将它复制到 `/config/refresh-jobs.json`；Fly 已设置对应环境变量。配置在启动时读取，修改后需要重新部署，不提供热加载或公开管理接口。当前仓库清单包含 25 个远程源，分别转换为 Loon、Shadowrocket、Egern，共 75 个启用任务，每 21600 秒（6 小时）刷新。Fly 缓存 TTL 配置为 86400 秒（24 小时），为刷新失败预留重试时间。内联 `localtext` 规则不加入后台任务。
+编辑仓库内 `config/refresh-jobs.json`。Docker 镜像包含默认清单；Fly 的 `[[files]]` 在每次部署时上传当前清单到 `/config/refresh-jobs.json`，并已设置对应环境变量。配置在启动时读取，修改后需要重新部署，但仅修改清单不需要重建镜像。不提供热加载或公开管理接口。当前仓库清单包含 25 个远程源，分别转换为 Loon、Shadowrocket、Egern，共 75 个启用任务，每 21600 秒（6 小时）刷新。Fly 缓存 TTL 配置为 86400 秒（24 小时），为刷新失败预留重试时间。内联 `localtext` 规则不加入后台任务。
 
 ```json
 {
@@ -160,7 +164,11 @@ fly status
 修改后先校验，再发布：
 
 ```bash
-go run . --check-refresh-config config/refresh-jobs.json
+# 使用 GitHub Actions 已生成的镜像校验，不执行本地编译。
+docker run --rm \
+  -v "$PWD/config/refresh-jobs.json:/config/refresh-jobs.json:ro" \
+  ghcr.io/woyin/script-hub/script-hub:1.0-beta \
+  --check-refresh-config /config/refresh-jobs.json
 fly deploy --ha=false
 ```
 
@@ -179,9 +187,9 @@ fly ssh sftp get /data/refresh-status.json ./refresh-status.json
 
 磁盘可用时，规则集转换依次下载每个源文件到可复用临时文件。下载完整且未超限后，逐行解析 Clash `payload` 列表或现有规则文本，分别将有效、不支持、已排除的规则写入临时文件。统计完成后组装原有格式的统计头及正文，发布完整缓存，再流式返回。保留原顺序和重复规则，不增加任意 YAML 语法支持。重写模块的冷转换继续使用原解析器，其缓存命中同样走流式发送。
 
-每个流式转换预留 64 MiB 磁盘预算，供所有分类文件及最终结果共同使用。该预留是磁盘空间，不是内存分配；最后一个响应读取者结束后释放。默认最多同时执行两个冷规则转换。单行长度上限为 2 MiB 与上游正文大小上限的较大值。上游正文限制仍按解压后字节数执行，生产默认仍为 600 KB。
+临时文件和正式缓存按实际文件长度计入全局磁盘预算，不为单个转换预留固定额度，也不设固定的单任务临时空间上限。每次写入前原子核算当前数据块的新增字节；失败或短写退回未写入部分，截断或清理文件时释放额度。仍被响应持有的文件继续计费。默认最多同时执行两个冷规则转换。单行长度上限为 2 MiB 与上游正文大小上限的较大值。上游正文限制仍按解压后字节数执行，生产默认仍为 600 KB。
 
-下载中断的源会整体丢弃。普通请求可返回其他完整源产生的结果，但不会缓存；强制刷新失败保留原缓存。磁盘或临时预算不可用时，记录日志并使用原有受输入大小限制的兼容路径。
+下载中断的源会整体丢弃。普通请求可返回其他完整源产生的结果，但不会缓存；强制刷新失败保留原缓存。磁盘或临时预算不可用时返回 503，不回退全内存路径。仅显式禁用缓存（TTL≤0）时保留原有内存转换行为。
 
 性能基准可运行：
 
