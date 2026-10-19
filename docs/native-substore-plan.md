@@ -88,3 +88,11 @@ Clash 目标保留节点字段；以上表格只描述首版已实现组合，�
 - 磁盘预算、原子更新失败保留旧数据、token 跨资源使用、缓存命中时撤销、同 key 并发合并/取消、真实 server SSRF 拦截均有测试。
 - `.env` 和默认私有数据目录不进入 Git 或 Docker 构建上下文；`.env.example` 不含有效密钥。
 - 本轮没有使用真实机场订阅、没有在客户端导入节点、没有测试实际握手和连通性，也没有在 Fly 上测量新模块的内存/并发上限。这些属于后续实际环境验收。
+
+## 管理界面适配（v1.1.1-beta）
+
+2026-10-20：按 Sub-Store Front-End 的主题、容器断点、导航、资源卡片及编辑表单重做管理页。原版素材与许可记录在 `internal/manager/UI-NOTICE.md`。界面仅覆盖当前后端支持的功能，不表示已经实现原版全部页面或接口。
+
+静态 HTML、CSS、JavaScript 和图标均由 Go 内嵌，不需要 Node 运行服务。浏览器仅保存外观偏好，不保存 Backend Key、订阅内容或分享 token。新增 CSS/JS/SVG 文件变更均会触发镜像工作流。
+
+当前验证：`go build`、`go vet ./...`、`go test -race -count=1 ./...`、`node --check internal/manager/management.js` 均通过。浏览器验证本地订阅/文件创建、编辑、Clash/Loon/Egern 导出、分享读取/撤销、筛选与重命名、文本脚本不执行、390px 无横向溢出和桌面日夜主题。没有使用真实订阅凭据，本轮界面改动按 `v1.1.1-beta` 发布并通过 GitHub Actions 镜像部署。

@@ -4,7 +4,8 @@
 
 - `store.go`：资源模型、验证、原子 JSON 持久化、永久数据预算、分享轮换与撤销。
 - `handler.go`：管理/分享路由、来源读取、私有磁盘导出缓存、并发合并与超时。
-- `page.go` / `index.html`：内嵌管理界面，无外部资源和 JavaScript 脚本执行功能。
+- `page.go` / `index.html` / `management.css` / `management.js` / `icons.svg`：内嵌管理界面，按 Sub-Store 的导航、卡片和主题适配；不加载外部资源。
+- `UI-NOTICE.md`：界面与素材来源、上游版本及 GPL-3.0 许可说明。
 - `manager_test.go`：权限、资源隔离、重启、缓存撤销、远程失败、并发合并和目录校验。
 
 数据目录必须与 cache 目录隔离；不保存分享 token 明文；不记录原始来源或凭据。

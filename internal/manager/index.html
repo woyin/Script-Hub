@@ -1,40 +1,59 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>订阅与文件管理 · Script Hub</title>
-<style>
-:root{font-family:system-ui,sans-serif;color:#172334;background:#f4f6fa}body{max-width:1080px;margin:30px auto;padding:0 18px}h1{font-size:25px}a{color:#285eb1}p{line-height:1.6;color:#526174}main{display:grid;grid-template-columns:260px 1fr;gap:20px}section,aside{background:white;padding:20px;border-radius:12px;border:1px solid #dce2eb}label{display:block;margin:14px 0 5px;font-weight:600}input,textarea,select,button{box-sizing:border-box;font:inherit;border:1px solid #bdc8d8;border-radius:6px;padding:9px}input,textarea{width:100%}textarea{font:13px ui-monospace,monospace;min-height:120px}button{cursor:pointer;background:#edf2fa;margin:5px 5px 5px 0}button.primary{background:#285eb1;color:white}button.danger{color:#a72a35}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}#list button{display:block;width:100%;text-align:left;overflow-wrap:anywhere}#message{white-space:pre-wrap;overflow-wrap:anywhere;color:#a72a35;min-height:24px}.hint{font-size:13px}#output{min-height:180px}.hidden{display:none}@media(max-width:720px){main{grid-template-columns:1fr}body{margin:16px auto}}
-</style></head><body>
-<h1>订阅与文件管理</h1><p>此页面使用 Backend URL 访问管理功能。请保管当前地址；向客户端分发时使用资源的分享链接。</p>
-<main><aside><label for="kind">资源类型</label><select id="kind"><option value="subscriptions">订阅</option><option value="files">文件</option></select><button id="new">新增</button><div id="list"></div></aside>
-<section><h2 id="heading">新增订阅</h2><label for="name">名称</label><input id="name" maxlength="256" autocomplete="off">
-<label for="source">来源</label><select id="source"><option value="local">本地内容</option><option value="remote">远程地址</option></select>
-<div id="localFields"><label for="content">内容</label><textarea id="content" spellcheck="false" placeholder="订阅可粘贴 Clash YAML、节点 URI 或 Base64；文件可填写文本。"></textarea></div>
-<div id="remoteFields" class="hidden"><label for="urls">远程 URL，每行一个</label><textarea id="urls" spellcheck="false"></textarea><p class="hint">订阅最多合并 16 个来源，文件使用一个来源。任何来源失败都会中止导出。</p><label for="headers">自定义请求头（JSON，可选）</label><textarea id="headers" spellcheck="false" placeholder='{"User-Agent":"Clash"}'></textarea></div>
-<div id="processingFields"><label for="processing">节点处理（JSON，可选）</label><textarea id="processing" spellcheck="false" placeholder='{"include":"香港|日本","exclude":"到期|剩余","deduplicate":true,"sort":true,"rename":[{"pattern":"旧名","replacement":"新名"}]}'></textarea></div>
-<p class="hint">编辑后请先保存，再预览或分享；导出读取的是已保存的配置。</p><div class="row"><button id="save" class="primary">保存</button><button id="delete" class="danger">删除</button></div>
-<hr><div class="row"><select id="target" aria-label="导出格式"><option value="clash">Clash YAML 节点订阅</option><option value="shadowrocket">Shadowrocket · Base64 URI</option><option value="loon">Loon · Proxy 文本</option><option value="egern">Egern · YAML</option><option value="uri">原始节点 URI</option></select><button id="preview">预览导出</button><button id="refresh">强制更新导出</button></div>
-<p class="hint">导出只包含节点，不包含完整策略组和分流配置。无法保留的协议或字段会明确报错。Shadowrocket 的 URI 输出仍需实际客户端导入验证。</p>
-<textarea id="output" readonly spellcheck="false" aria-label="导出结果"></textarea><button id="download">下载结果</button>
-<div class="row"><button id="share">生成 / 轮换分享链接</button><button id="revoke">撤销分享</button></div><input id="shareLink" readonly aria-label="分享链接"><p class="hint">新链接只显示一次，轮换后旧链接失效。删除资源也会关闭分享。分享访问不能修改资源或强制刷新。</p>
-<button id="capabilities">查看兼容范围</button><div id="message" role="status"></div>
-</section></main>
-<script>
-'use strict';
-const $=id=>document.getElementById(id),base=location.pathname.replace(/\/+$/,''),state={id:null,body:'',kind:'subscriptions'};
-const show=m=>{$('message').textContent=m};
-async function api(path,method='GET',body){const opts={method,headers:{'Content-Type':'application/json'},cache:'no-store',referrerPolicy:'no-referrer'};if(body!==undefined)opts.body=JSON.stringify(body);const r=await fetch(base+'/api/'+path,opts);if(!r.ok){const t=await r.text();throw new Error(t)}return r.status===204?null:r.json()}
-function endpoint(){if(!state.id)throw new Error('请先保存资源');return state.kind+'/'+state.id}
-function toggle(){const remote=$('source').value==='remote';$('localFields').classList.toggle('hidden',remote);$('remoteFields').classList.toggle('hidden',!remote);$('processingFields').classList.toggle('hidden',state.kind==='files');$('target').classList.toggle('hidden',state.kind==='files')}
-function reset(){state.id=null;state.body='';for(const id of ['name','content','urls','headers','processing','output','shareLink'])$(id).value='';$('source').value='local';$('heading').textContent=state.kind==='files'?'新增文件':'新增订阅';show('');toggle()}
-async function list(){const rows=await api(state.kind);$('list').replaceChildren();for(const r of rows){const b=document.createElement('button');b.textContent=r.name+(r.shared?' · 已分享':'');b.onclick=wrap(async()=>{const v=await api(state.kind+'/'+r.id);state.id=v.id;$('name').value=v.spec.name;$('source').value=v.spec.source;$('content').value=v.spec.content||'';$('urls').value=(v.spec.urls||[]).join('\n');$('headers').value=v.spec.headers?JSON.stringify(v.spec.headers,null,2):'';$('processing').value=v.spec.processing?JSON.stringify(v.spec.processing,null,2):'';$('heading').textContent='编辑 '+v.spec.name;$('shareLink').value='';$('output').value='';state.body='';show('');toggle()});$('list').appendChild(b)}}
-const wrap=f=>async()=>{try{await f()}catch(e){show(e.message)}};
-$('source').onchange=()=>{toggle();state.body='';$('output').value=''};$('target').onchange=()=>{state.body='';$('output').value='';$('shareLink').value=''};$('new').onclick=reset;$('kind').onchange=wrap(async()=>{state.kind=$('kind').value;reset();await list()});
-$('save').onclick=wrap(async()=>{const remote=$('source').value==='remote',spec={name:$('name').value,source:$('source').value};if(remote){spec.urls=$('urls').value.split('\n').map(s=>s.trim()).filter(Boolean);if($('headers').value.trim())spec.headers=JSON.parse($('headers').value)}else spec.content=$('content').value;if(state.kind==='subscriptions'&&$('processing').value.trim())spec.processing=JSON.parse($('processing').value);const v=await api(state.id?endpoint():state.kind,state.id?'PUT':'POST',spec);state.id=v.id;$('heading').textContent='编辑 '+spec.name;$('output').value='';state.body='';show('已保存');await list()});
-$('delete').onclick=wrap(async()=>{const p=endpoint();if(!confirm('删除资源及其分享链接？'))return;await api(p,'DELETE');reset();await list()});
-async function preview(force){const p=endpoint();show('正在导出…');const q=new URLSearchParams({target:$('target').value});if(force)q.set('refresh','true');const r=await fetch(base+'/api/'+p+'/export?'+q,{cache:'no-store',referrerPolicy:'no-referrer'});const text=await r.text();if(!r.ok)throw new Error(text);state.body=text;$('output').value=text;show('导出完成 · '+(r.headers.get('X-ScriptHub-Cache')||''))}
-$('preview').onclick=wrap(()=>preview(false));$('refresh').onclick=wrap(()=>preview(true));
-$('share').onclick=wrap(async()=>{const v=await api(endpoint()+'/share','POST',{}),u=new URL(v.path,location.origin);if(state.kind==='subscriptions')u.searchParams.set('target',$('target').value);$('shareLink').value=u.href;show('请复制新分享链接；旧链接已失效');await list()});
-$('revoke').onclick=wrap(async()=>{await api(endpoint()+'/share','DELETE');$('shareLink').value='';show('分享已撤销');await list()});
-$('capabilities').onclick=wrap(async()=>{state.body='';$('output').value=JSON.stringify(await api('capabilities'),null,2)});
-$('download').onclick=()=>{if(!state.body){show('请先预览导出');return}const u=URL.createObjectURL(new Blob([state.body],{type:'text/plain'})),a=document.createElement('a');a.href=u;a.download='export.'+(state.kind==='subscriptions'&&['clash','egern'].includes($('target').value)?'yaml':'txt');a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)};
-reset();wrap(list)();
-</script></body></html>
+<!-- Interface adapted from Sub-Store Front-End (GPL-3.0). See UI-NOTICE.md. -->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <title>Sub-Store · 订阅与文件管理</title>
+    <style>
+      /* MANAGEMENT_CSS */
+    </style>
+  </head>
+  <body>
+    <!-- MANAGEMENT_ICONS -->
+    <header class="navbar container">
+      <div class="nav-actions left" id="navLeft"></div>
+      <h1 id="pageTitle">订阅</h1>
+      <div class="nav-actions right" id="navRight"></div>
+    </header>
+    <nav class="sidebar" aria-label="主导航" id="sidebar"></nav>
+    <main class="page container" id="page" aria-label="订阅与文件管理"></main>
+    <nav
+      class="bottom-nav container"
+      aria-label="底部导航"
+      id="bottomNav"
+    ></nav>
+    <dialog class="modal sheet" id="actionDialog" aria-labelledby="dialogTitle">
+      <div class="modal-header">
+        <h2 id="dialogTitle"></h2>
+        <button class="icon-button" id="closeDialog" aria-label="关闭弹窗">
+          <svg class="icon"><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="dialogBody"></div>
+    </dialog>
+    <dialog class="modal" id="confirmDialog" aria-labelledby="confirmTitle">
+      <div class="modal-header"><h2 id="confirmTitle">确认操作</h2></div>
+      <div class="modal-body">
+        <p class="confirm-message" id="confirmMessage"></p>
+        <div class="modal-actions">
+          <button class="plain-button" id="confirmCancel">取消</button
+          ><button class="primary-button" id="confirmOK">确认</button>
+        </div>
+      </div>
+    </dialog>
+    <div
+      class="toast hidden"
+      id="message"
+      role="status"
+      aria-live="polite"
+    ></div>
+    <script>
+      /* MANAGEMENT_JS */
+    </script>
+  </body>
+</html>

@@ -47,7 +47,7 @@ docker run --rm -p 9100:9100 ghcr.io/woyin/script-hub/script-hub:latest
 
 仓库内 `fly.toml` 使用 `breestealth-scripthub-go`、新加坡区域和 9100 端口。Fly.io 健康检查请求 `GET /healthz`。
 
-`[build].image` 指向 GitHub Actions 已发布的 `ghcr.io/woyin/script-hub/script-hub:1.1-beta`，部署只拉取现成镜像，不在本地或 Fly builder 再次编译。版本 Git 标签为 `v1.1.1-beta`，镜像同时发布 `1.1-beta`、`1.1.1-beta`、`v1.1.1-beta` 和 `latest`。`latest` 随后续主分支构建更新；需要固定此 beta 时使用 `1.1-beta`。正式部署前等待对应镜像工作流成功。
+`[build].image` 指向 GitHub Actions 发布的 `ghcr.io/woyin/script-hub/script-hub:1.1.1-beta`，部署只拉取现成镜像，不在本地或 Fly builder 再次编译。版本 Git 标签为 `v1.1.1-beta`，镜像同时发布 `1.1-beta`、`1.1.1-beta`、`v1.1.1-beta` 和 `latest`。`latest` 随后续主分支构建更新；`1.1-beta` 跟随 1.1 系列 beta 更新；需要固定此版本时使用 `1.1.1-beta`。正式部署前等待对应镜像工作流成功。
 
 部署前创建同区域的 1 GB Volume（已有同名卷时不要重复创建）：
 
@@ -354,7 +354,7 @@ Fly 使用自己的密钥管理：
 # .env 内只放准备上传到 Fly 的环境变量和秘密；不要提交该文件。
 fly secrets import < .env
 # 等待包含本功能的 GitHub Actions 镜像发布成功后，直接部署现成镜像。
-fly deploy --image ghcr.io/woyin/script-hub/script-hub:1.1-beta --ha=false
+fly deploy --image ghcr.io/woyin/script-hub/script-hub:1.1.1-beta --ha=false
 ```
 
 `1.1-beta` 包含管理模块；旧的 `1.0-beta` 不包含。部署直接使用 Actions 发布的镜像，无需本地重新编译。
@@ -395,3 +395,5 @@ fly deploy --image ghcr.io/woyin/script-hub/script-hub:1.1-beta --ha=false
 本地来源使用 `"source":"local"` 与 `content`，不填写 `urls` 和 `headers`。远程来源可用 `headers` 配置请求头。文件不接受节点 `processing`。
 
 创建响应包含资源 `id`、`spec` 和更新时间。分享接口只在生成时返回 `path`，例如 `/share/subscriptions/<id>/<token>`；客户端可追加 `?target=clash|shadowrocket|uri|loon|egern`。文件分享直接返回文本。轮换分享后旧 token 立即失效；已开始发送的响应不会被中途截断。
+
+管理页的导航、卡片、编辑表单和日间/夜间主题按原版 Sub-Store 前端适配，支持桌面侧栏和手机底部导航。仅显示已实现的功能。界面来源、上游版本和素材许可见 [UI-NOTICE.md](internal/manager/UI-NOTICE.md)。

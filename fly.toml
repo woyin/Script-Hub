@@ -18,7 +18,7 @@ primary_region = "sin"
   initial_size = "1gb"
 
 [build]
-  image = "ghcr.io/woyin/script-hub/script-hub:1.1-beta"
+  image = "ghcr.io/woyin/script-hub/script-hub:1.1.1-beta"
 
 # 部署时上传本地任务清单；只修改清单不需要重新构建镜像。
 [[files]]
