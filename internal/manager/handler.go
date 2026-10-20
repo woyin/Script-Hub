@@ -24,29 +24,42 @@ import (
 
 type FetchFunc func(context.Context, string, map[string]string, io.Writer) error
 type Config struct {
-	BackendKey     string
-	DataDir        string
-	CacheDir       string
-	MaxBytes       int64
-	SourceMaxBytes int64
-	Concurrency    int
-	Timeout        time.Duration
-	Version        string
-	Cache          *cache.Cache
-	Fetch          FetchFunc
+	BackendKey       string
+	DataDir          string
+	CacheDir         string
+	MaxBytes         int64
+	SourceMaxBytes   int64
+	Concurrency      int
+	Timeout          time.Duration
+	Version          string
+	Cache            *cache.Cache
+	Fetch            FetchFunc
+	FetchConditional ConditionalFetchFunc
+	CacheTTL         time.Duration
+	StaleTTL         time.Duration
 }
 type flight struct {
-	done chan struct{}
-	err  error
-	body types.ResponseData
+	forced bool
+	done   chan struct{}
+	err    error
+	body   types.ResponseData
 }
 type Handler struct {
-	cfg     Config
-	store   *Store
-	key     [32]byte
-	slots   chan struct{}
-	mu      sync.Mutex
-	flights map[string]*flight
+	cfg            Config
+	store          *Store
+	key            [32]byte
+	slots          chan struct{}
+	mu             sync.Mutex
+	flights        map[string]*flight
+	sourceMu       sync.Mutex
+	sourceFlights  map[string]*sourceFlight
+	stats          managerStats
+	runtime        *runtimeState
+	bgMu           sync.Mutex
+	bgCancel       context.CancelFunc
+	bgDone         chan struct{}
+	nextBackup     time.Time
+	refreshFlights map[string]*flight
 }
 
 func New(cfg Config) (*Handler, error) {
@@ -81,11 +94,24 @@ func New(cfg Config) (*Handler, error) {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 60 * time.Second
 	}
+	if cfg.CacheTTL <= 0 {
+		cfg.CacheTTL = 24 * time.Hour
+	}
+	if cfg.StaleTTL < 0 {
+		cfg.StaleTTL = 0
+	} else if cfg.StaleTTL == 0 {
+		cfg.StaleTTL = 24 * time.Hour
+	}
 	store, err := NewStore(data, cfg.MaxBytes)
 	if err != nil {
 		return nil, err
 	}
-	return &Handler{cfg: cfg, store: store, key: sha256.Sum256([]byte(cfg.BackendKey)), slots: make(chan struct{}, cfg.Concurrency), flights: map[string]*flight{}}, nil
+	h := &Handler{cfg: cfg, store: store, sourceFlights: map[string]*sourceFlight{}, refreshFlights: map[string]*flight{}, key: sha256.Sum256([]byte(cfg.BackendKey)), slots: make(chan struct{}, cfg.Concurrency), flights: map[string]*flight{}}
+	h.runtime, err = newRuntimeState(data)
+	if err != nil {
+		return nil, err
+	}
+	return h, nil
 }
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -131,6 +157,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if h.adminExtra(w, r, parts) {
+		return
+	}
 	if parts[3] == "capabilities" && len(parts) == 4 && r.Method == http.MethodGet {
 		h.json(w, http.StatusOK, subscription.Capabilities())
 		return
@@ -172,6 +201,40 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id := parts[4]
 	if len(parts) == 6 {
 		switch parts[5] {
+		case "refresh":
+			if r.Method != http.MethodPost {
+				h.method(w)
+				return
+			}
+			if !h.jsonRequest(w, r) {
+				return
+			}
+			gated, release, ok := h.acquire(w, r)
+			if !ok {
+				return
+			}
+			defer release()
+			r = gated
+			record, err := h.store.Get(kind, id)
+			if err != nil {
+				h.storeError(w, err)
+				return
+			}
+			if err = h.refreshResource(r.Context(), record); err != nil {
+				h.error(w, 422, "one or more refresh targets failed")
+				return
+			}
+			h.current(record, func() {
+				_ = h.runtime.update(record, func(status *ResourceStatus) {
+					status.Failures = 0
+					if record.Spec.Refresh.Enabled {
+						delay := interval(record)
+						status.NextRun = time.Now().UTC().Add(delay + jitter(record, delay))
+					}
+				})
+			})
+			h.json(w, 200, h.runtime.get(record))
+
 		case "export":
 			if r.Method != http.MethodGet {
 				h.method(w)
@@ -219,17 +282,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.storeError(w, err)
 			return
 		}
+		w.Header().Set("ETag", `"`+revision(record)+`"`)
 		h.json(w, http.StatusOK, publicRecord(record))
 	case http.MethodPut:
 		var spec Spec
 		if !h.decode(w, r, &spec) {
 			return
 		}
-		record, err := h.store.Save(kind, id, spec)
+		expected := strings.Trim(r.Header.Get("If-Match"), "\"")
+		if expected == "" {
+			h.error(w, http.StatusPreconditionRequired, "If-Match resource version is required")
+			return
+		}
+		record, err := h.store.SaveVersion(kind, id, spec, expected)
 		if err != nil {
 			h.storeError(w, err)
 			return
 		}
+		w.Header().Set("ETag", `"`+revision(record)+`"`)
 		h.json(w, http.StatusOK, publicRecord(record))
 	case http.MethodDelete:
 		if !h.jsonRequest(w, r) {
@@ -246,12 +316,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 func publicRecord(r Record) any {
 	return struct {
+		Version   string    `json:"version"`
 		ID        string    `json:"id"`
 		Kind      string    `json:"kind"`
 		Spec      Spec      `json:"spec"`
 		UpdatedAt time.Time `json:"updatedAt"`
 		Shared    bool      `json:"shared"`
-	}{r.ID, r.Kind, r.Spec, r.UpdatedAt, r.ShareDigest != ""}
+	}{revision(r), r.ID, r.Kind, r.Spec, r.UpdatedAt, r.ShareDigest != ""}
 }
 func (h *Handler) share(w http.ResponseWriter, r *http.Request, parts []string) {
 	if len(parts) != 4 || r.Method != http.MethodGet {
@@ -321,6 +392,13 @@ func (h *Handler) serveExport(w http.ResponseWriter, r *http.Request, record Rec
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	}
 	w.Header().Set("X-ScriptHub-Cache", state)
+	if generated := rd.Headers["Generated-At"]; generated != "" {
+		w.Header().Set("X-ScriptHub-Generated-At", generated)
+	}
+	if state == "STALE" {
+		w.Header().Set("X-ScriptHub-Stale", "true")
+		w.Header().Set("Warning", `110 - "Response is stale"`)
+	}
 	// Keep all exports as data; file content is never served as HTML/JavaScript.
 	if rd.File != nil {
 		io.Copy(w, rd.File.Reader())
@@ -329,16 +407,15 @@ func (h *Handler) serveExport(w http.ResponseWriter, r *http.Request, record Rec
 	}
 }
 func (h *Handler) export(ctx context.Context, r Record, target string, force bool) (types.ResponseData, string, error) {
-	revision, _ := json.Marshal(struct {
-		Version   string
-		ID        string
-		Spec      Spec
-		UpdatedAt time.Time
-		Target    string
-	}{h.cfg.Version, r.ID, r.Spec, r.UpdatedAt, target})
-	key := "managed:" + digest(string(revision))
+	key := outputKey(r, target)
+	started := time.Now()
+	defer func() { h.stats.observe("export", time.Since(started)) }()
+	if force {
+		ctx = context.WithValue(ctx, refreshSourceKey{}, time.Now())
+	}
 	if !force {
 		if rd, ok := h.cfg.Cache.Get(key); ok {
+			h.stats.outputHits.Add(1)
 			return rd, "HIT", nil
 		}
 	}
@@ -350,8 +427,13 @@ func (h *Handler) export(ctx context.Context, r Record, target string, force boo
 			return types.ResponseData{}, "", ctx.Err()
 		case <-existing.done:
 		}
+		// A force request may share another force, but must revalidate after an
+		// ordinary conversion that only reused a fresh source file.
+		if force && !existing.forced {
+			return h.export(ctx, r, target, true)
+		}
 		if existing.err != nil {
-			return types.ResponseData{}, "", existing.err
+			return h.exportFailure(r, target, force, existing.err)
 		}
 		rd, err := h.result(key, existing)
 		state := "MISS"
@@ -363,7 +445,8 @@ func (h *Handler) export(ctx context.Context, r Record, target string, force boo
 		}
 		return rd, state, err
 	}
-	f := &flight{done: make(chan struct{})}
+	h.stats.outputMisses.Add(1)
+	f := &flight{done: make(chan struct{}), forced: force}
 	h.flights[key] = f
 	h.mu.Unlock()
 	f.body, f.err = h.produce(ctx, r, key, target)
@@ -372,7 +455,7 @@ func (h *Handler) export(ctx context.Context, r Record, target string, force boo
 	close(f.done)
 	h.mu.Unlock()
 	if f.err != nil {
-		return types.ResponseData{}, "", f.err
+		return h.exportFailure(r, target, force, f.err)
 	}
 	rd, err := h.result(key, f)
 	state := "MISS"
@@ -394,7 +477,9 @@ func (h *Handler) result(key string, f *flight) (types.ResponseData, error) {
 	}
 	return rd, nil
 }
-func (h *Handler) produce(ctx context.Context, r Record, key, target string) (types.ResponseData, error) {
+func (h *Handler) produce(ctx context.Context, r Record, key, target string) (out types.ResponseData, err error) {
+	started := time.Now().UTC()
+	defer func() { h.note(r, target, started, err) }()
 	if err := ctx.Err(); err != nil {
 		return types.ResponseData{}, err
 	}
@@ -433,33 +518,7 @@ func (h *Handler) produce(ctx context.Context, r Record, key, target string) (ty
 			rd.Body = b.String()
 		}
 	} else {
-		var all []subscription.Node
-		if r.Spec.Source == "local" {
-			nodes, err := subscription.Parse([]byte(r.Spec.Content))
-			if err != nil {
-				return types.ResponseData{}, err
-			}
-			all = nodes
-		} else {
-			var total int64
-			for i, source := range r.Spec.URLs {
-				var b bytes.Buffer
-				limited := &budgetWriter{dst: &b, left: h.cfg.SourceMaxBytes - total}
-				if err := h.fetch(ctx, source, r.Spec.Headers, limited); err != nil {
-					return types.ResponseData{}, fmt.Errorf("source %d: %w", i+1, err)
-				}
-				total += int64(b.Len())
-				nodes, err := subscription.Parse(b.Bytes())
-				if err != nil {
-					return types.ResponseData{}, fmt.Errorf("source %d: %w", i+1, err)
-				}
-				all = append(all, nodes...)
-				if len(all) > subscription.MaxNodes {
-					return types.ResponseData{}, errors.New("too many combined nodes")
-				}
-			}
-		}
-		all, err := subscription.Process(all, r.Spec.Processing)
+		all, err := h.readNodes(ctx, r)
 		if err != nil {
 			return types.ResponseData{}, err
 		}
@@ -480,7 +539,14 @@ func (h *Handler) produce(ctx context.Context, r Record, key, target string) (ty
 		return types.ResponseData{}, err
 	}
 	if h.cfg.Cache != nil {
-		if err := h.cfg.Cache.Set(key, rd); err != nil {
+		if current, err := h.store.Get(r.Kind, r.ID); err != nil || revision(current) != revision(r) {
+			return types.ResponseData{}, ErrConflict
+		}
+		if rd.Headers == nil {
+			rd.Headers = map[string]string{}
+		}
+		rd.Headers["Generated-At"] = time.Now().UTC().Format(time.RFC3339Nano)
+		if err := h.cfg.Cache.SetLifetime(key, rd, h.cfg.CacheTTL, h.cfg.StaleTTL); err != nil {
 			return types.ResponseData{}, err
 		}
 		return types.ResponseData{}, nil
@@ -501,7 +567,7 @@ func (w *budgetWriter) Write(p []byte) (int, error) {
 	w.left -= int64(n)
 	return n, err
 }
-func (h *Handler) fetch(ctx context.Context, source string, headers map[string]string, dst io.Writer) error {
+func (h *Handler) fetchRaw(ctx context.Context, source string, headers map[string]string, dst io.Writer) error {
 	if h.cfg.Fetch == nil {
 		return errors.New("remote source fetching is unavailable")
 	}
@@ -555,6 +621,8 @@ func (h *Handler) method(w http.ResponseWriter) {
 }
 func (h *Handler) storeError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, ErrConflict):
+		h.error(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrNotFound):
 		http.NotFound(w, nil)
 	case errors.Is(err, ErrInvalid):
@@ -617,4 +685,69 @@ func (h *Handler) acquire(w http.ResponseWriter, r *http.Request) (*http.Request
 		h.error(w, status, "export queue timed out or cancelled")
 		return r, func() {}, false
 	}
+}
+
+type preparedNodesKey struct{}
+
+func (h *Handler) readNodes(ctx context.Context, r Record) ([]subscription.Node, error) {
+	if nodes, ok := ctx.Value(preparedNodesKey{}).([]subscription.Node); ok {
+		return nodes, nil
+	}
+	started := time.Now()
+	defer func() { h.stats.observe("parse_process", time.Since(started)) }()
+	var all []subscription.Node
+	if r.Spec.Source == "local" {
+		nodes, err := subscription.Parse([]byte(r.Spec.Content))
+		if err != nil {
+			return nil, err
+		}
+		all = nodes
+	} else {
+		var total int64
+		for i, source := range r.Spec.URLs {
+			var b bytes.Buffer
+			limited := &budgetWriter{dst: &b, left: h.cfg.SourceMaxBytes - total}
+			if err := h.fetch(ctx, source, r.Spec.Headers, limited); err != nil {
+				return nil, fmt.Errorf("source %d: %w", i+1, err)
+			}
+			total += int64(b.Len())
+			nodes, err := subscription.Parse(b.Bytes())
+			if err != nil {
+				return nil, fmt.Errorf("source %d: %w", i+1, err)
+			}
+			all = append(all, nodes...)
+			if len(all) > subscription.MaxNodes {
+				return nil, errors.New("too many combined nodes")
+			}
+		}
+	}
+	all, err := subscription.Process(all, r.Spec.Processing)
+	if err != nil {
+		return nil, err
+	}
+
+	return all, nil
+}
+
+func outputKey(r Record, target string) string {
+	b, _ := json.Marshal(struct {
+		Schema   string
+		ID       string
+		Spec     Spec
+		Revision string
+		Target   string
+	}{"manager-output-v2", r.ID, r.Spec, revision(r), target})
+	return "managed:" + digest(string(b))
+}
+func (h *Handler) exportFailure(r Record, target string, force bool, err error) (types.ResponseData, string, error) {
+	h.stats.exportErrors.Add(1)
+	if !force && !r.Spec.Refresh.DisableStale && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrConflict) {
+		if current, e := h.store.Get(r.Kind, r.ID); e == nil && revision(current) == revision(r) {
+			if rd, ok := h.cfg.Cache.GetRetained(outputKey(r, target)); ok {
+				h.stats.staleResponses.Add(1)
+				return rd, "STALE", nil
+			}
+		}
+	}
+	return types.ResponseData{}, "", err
 }

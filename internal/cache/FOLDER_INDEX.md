@@ -19,3 +19,5 @@
 - `BenchmarkCacheStreamHit` 测量 1/10/50 MiB 文件的流式读取。
 
 `CreatedAt` 仅查询有效缓存索引，供后台调度判断是否需要刷新，不读取正文。
+
+`SetLifetime` 支持独立的新鲜期与有界保留期；`Get` 只返回新鲜内容，`GetRetained` 可读取仍保留的过期内容。二者均 pin 文件并计入实际字节，过期保留支持重启恢复。

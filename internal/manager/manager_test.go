@@ -45,6 +45,16 @@ func request(t *testing.T, h http.Handler, method, path string, body any) *httpt
 	}
 	req := httptest.NewRequest(method, path, strings.NewReader(text))
 	req.Header.Set("Content-Type", "application/json")
+	if method == "PUT" {
+		if mh, ok := h.(*Handler); ok {
+			parts := strings.Split(strings.Trim(path, "/"), "/")
+			if len(parts) == 5 {
+				if record, err := mh.store.Get(parts[3], parts[4]); err == nil {
+					req.Header.Set("If-Match", revision(record))
+				}
+			}
+		}
+	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec

@@ -31,10 +31,11 @@ var ErrCapacity = errors.New("insufficient cache capacity")
 var ErrUnavailable = errors.New("disk cache unavailable")
 
 type metadata struct {
-	ExpiresAt time.Time
-	Status    int
-	Headers   map[string]string
-	Size      int64
+	ExpiresAt   time.Time
+	RetainUntil time.Time `json:",omitempty"`
+	Status      int
+	Headers     map[string]string
+	Size        int64
 }
 type record struct {
 	size    int64
@@ -97,13 +98,13 @@ func New(dir string, ttlSeconds int, maxBytes int64) (*Cache, error) {
 		m, _, err := readMetadata(f)
 		info, statErr := f.Stat()
 		f.Close()
-		if err != nil || statErr != nil || time.Now().After(m.ExpiresAt) {
+		if err != nil || statErr != nil || time.Now().After(retainUntil(m)) {
 			if err := os.Remove(path); err != nil {
 				return nil, err
 			}
 			continue
 		}
-		c.files[path] = &record{size: info.Size(), expires: m.ExpiresAt, created: info.ModTime()}
+		c.files[path] = &record{size: info.Size(), expires: retainUntil(m), created: info.ModTime()}
 		c.used += info.Size()
 	}
 	if err := c.evict(0, ""); err != nil {
@@ -148,7 +149,19 @@ func readMetadata(f *os.File) (metadata, int64, error) {
 	return m, offset, nil
 }
 
-func (c *Cache) Get(key string) (types.ResponseData, bool) {
+func (c *Cache) Get(key string) (types.ResponseData, bool) { return c.get(key, false) }
+
+// GetRetained reads fresh or retained data. It never extends retention.
+func (c *Cache) GetRetained(key string) (types.ResponseData, bool) { return c.get(key, true) }
+
+func retainUntil(m metadata) time.Time {
+	if m.RetainUntil.After(m.ExpiresAt) {
+		return m.RetainUntil
+	}
+	return m.ExpiresAt
+}
+
+func (c *Cache) get(key string, retained bool) (types.ResponseData, bool) {
 	if c == nil {
 		return types.ResponseData{}, false
 	}
@@ -165,14 +178,18 @@ func (c *Cache) Get(key string) (types.ResponseData, bool) {
 		return types.ResponseData{}, false
 	}
 	m, offset, err := readMetadata(f)
-	if err != nil || time.Now().After(m.ExpiresAt) {
+	if err != nil || time.Now().After(retainUntil(m)) {
 		f.Close()
 		c.remove(path)
 		return types.ResponseData{}, false
 	}
+	if !retained && time.Now().After(m.ExpiresAt) {
+		f.Close()
+		return types.ResponseData{}, false
+	}
 	if rec == nil {
 		info, _ := f.Stat()
-		rec = &record{size: info.Size(), expires: m.ExpiresAt, created: info.ModTime()}
+		rec = &record{size: info.Size(), expires: retainUntil(m), created: info.ModTime()}
 		c.files[path] = rec
 		c.used += rec.size
 	}
@@ -192,6 +209,14 @@ func (c *Cache) Set(key string, rd types.ResponseData) error {
 	if c == nil {
 		return nil
 	}
+	return c.SetLifetime(key, rd, c.ttl, 0)
+}
+
+// SetLifetime charges actual bytes, with an optional bounded stale-retention window.
+func (c *Cache) SetLifetime(key string, rd types.ResponseData, fresh, stale time.Duration) error {
+	if c == nil {
+		return nil
+	}
 	if rd.Incomplete || rd.Status != 200 {
 		return fmt.Errorf("response is not cacheable")
 	}
@@ -201,7 +226,9 @@ func (c *Cache) Set(key string, rd types.ResponseData) error {
 		size = rd.File.Size()
 		source = rd.File.Reader()
 	}
-	data, err := json.Marshal(metadata{ExpiresAt: time.Now().Add(c.ttl), Status: rd.Status, Headers: rd.Headers, Size: size})
+	expires := time.Now().Add(fresh)
+	retains := expires.Add(stale)
+	data, err := json.Marshal(metadata{ExpiresAt: expires, RetainUntil: retains, Status: rd.Status, Headers: rd.Headers, Size: size})
 	if err != nil {
 		return err
 	}
@@ -250,7 +277,7 @@ func (c *Cache) Set(key string, rd types.ResponseData) error {
 			c.used -= old.size
 		}
 	}
-	c.files[path] = &record{size: f.size, expires: time.Now().Add(c.ttl), created: time.Now()}
+	c.files[path] = &record{size: f.size, expires: retains, created: time.Now()}
 	workspace.used -= f.size
 	return nil
 }

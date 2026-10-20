@@ -98,7 +98,7 @@ func New(cfg *config.Config) *Server {
 				sourceMaxKB = 8192
 			}
 			client := httpclient.NewClient(cfg.HTTPTimeout, sourceMaxKB)
-			s.management, s.startupErr = manager.New(manager.Config{BackendKey: cfg.ManagerBackendKey, DataDir: cfg.ManagerDataDir, CacheDir: cfg.CacheDir, MaxBytes: cfg.ManagerMaxBytes, SourceMaxBytes: int64(sourceMaxKB) * 1024, Concurrency: cfg.ManagerConcurrency, Timeout: time.Duration(cfg.RequestTimeout) * time.Second, Version: cfg.Version, Cache: diskCache, Fetch: func(ctx context.Context, source string, headers map[string]string, dst io.Writer) error {
+			s.management, s.startupErr = manager.New(manager.Config{BackendKey: cfg.ManagerBackendKey, DataDir: cfg.ManagerDataDir, CacheDir: cfg.CacheDir, MaxBytes: cfg.ManagerMaxBytes, SourceMaxBytes: int64(sourceMaxKB) * 1024, Concurrency: cfg.ManagerConcurrency, Timeout: time.Duration(cfg.RequestTimeout) * time.Second, Version: cfg.Version, CacheTTL: time.Duration(cfg.CacheTTL) * time.Second, Cache: diskCache, FetchConditional: client.GetToWithMetadata, Fetch: func(ctx context.Context, source string, headers map[string]string, dst io.Writer) error {
 				status, err := client.GetTo(ctx, source, headers, dst)
 				if err != nil {
 					return err
@@ -133,6 +133,9 @@ func (s *Server) Start(addr string) error {
 		return s.startupErr
 	}
 	s.refresher.start()
+	if s.management != nil {
+		s.management.Start()
+	}
 	s.httpServer = &http.Server{
 		Addr:              addr,
 		Handler:           s.router,
@@ -144,6 +147,11 @@ func (s *Server) Start(addr string) error {
 
 // Shutdown 优雅关闭 HTTP 服务。
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.management != nil {
+		if err := s.management.Stop(ctx); err != nil {
+			return err
+		}
+	}
 	if err := s.refresher.stop(ctx); err != nil {
 		return err
 	}

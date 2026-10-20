@@ -966,3 +966,29 @@ dialog[open] {
   color: var(--primary);
   border-color: var(--primary);
 }
+
+.field-row input[type="number"] {
+  border: 0;
+  background: none;
+  min-width: 0;
+  width: 100%;
+  text-align: right;
+  color: var(--text);
+  padding: 4px 0;
+}
+.refresh-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+.refresh-targets label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: 12px;
+}
+.refresh-targets input {
+  accent-color: var(--primary);
+}

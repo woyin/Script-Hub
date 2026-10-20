@@ -557,6 +557,9 @@ func (s *Server) cacheKey(sourceType, target string, urls []string, args map[str
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	s.metrics.Render(w)
+	if s.management != nil {
+		s.management.RenderMetrics(w)
+	}
 }
 
 // formatsDocument 描述实例支持的格式能力，启动时静态确定。

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 var (
 	ErrNotFound = errors.New("resource not found")
 	ErrInvalid  = errors.New("invalid resource")
+	ErrConflict = errors.New("resource changed; reload before saving")
 	ErrLimit    = errors.New("management data limit exceeded")
 )
 
@@ -32,7 +34,19 @@ const MaxResources = 256
 
 var resourceID = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
+type RefreshPolicy struct {
+	Enabled         bool     `json:"enabled,omitempty"`
+	IntervalSeconds int      `json:"intervalSeconds,omitempty"`
+	Targets         []string `json:"targets,omitempty"`
+	DisableStale    bool     `json:"disableStale,omitempty"`
+}
+
+func revision(r Record) string {
+	return digest(r.ID + "@" + r.UpdatedAt.UTC().Format(time.RFC3339Nano))
+}
+
 type Spec struct {
+	Refresh    RefreshPolicy        `json:"refresh,omitempty"`
 	Name       string               `json:"name"`
 	Source     string               `json:"source"` // local or remote
 	Content    string               `json:"content,omitempty"`
@@ -61,9 +75,12 @@ func (r Record) Summary() Summary {
 }
 
 type Store struct {
-	mu       sync.RWMutex
-	dir      string
-	maxBytes int64
+	mu         sync.RWMutex
+	backupMu   sync.Mutex
+	backupPins map[string]int
+	dir        string
+	root       string
+	maxBytes   int64
 }
 
 func NewStore(dir string, maxBytes int64) (*Store, error) {
@@ -79,7 +96,19 @@ func NewStore(dir string, maxBytes int64) (*Store, error) {
 	if err := os.Chmod(dir, 0700); err != nil {
 		return nil, errors.New("cannot secure management data directory")
 	}
-	s := &Store{dir: dir, maxBytes: maxBytes}
+	s := &Store{dir: dir, root: dir, maxBytes: maxBytes, backupPins: map[string]int{}}
+	if b, err := os.ReadFile(filepath.Join(dir, ".active")); err == nil {
+		name := string(b)
+		if !regexp.MustCompile(`^records-[a-f0-9]{64}$`).MatchString(name) {
+			return nil, errors.New("invalid management active generation")
+		}
+		s.dir = filepath.Join(dir, name)
+		if info, err := os.Stat(s.dir); err != nil || !info.IsDir() {
+			return nil, errors.New("missing management active generation")
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -88,6 +117,40 @@ func NewStore(dir string, maxBytes int64) (*Store, error) {
 		if strings.HasPrefix(e.Name(), ".pending-") {
 			if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
 				return nil, err
+			}
+		}
+	}
+	// Retire uncommitted/old restore generations after a crash. Never follow symlinks.
+	for _, entry := range entries {
+		if regexp.MustCompile(`^records-[a-f0-9]{64}$`).MatchString(entry.Name()) && filepath.Join(s.root, entry.Name()) != s.dir {
+			if err := os.RemoveAll(filepath.Join(s.root, entry.Name())); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if s.dir != s.root {
+		active, err := os.ReadDir(s.dir)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range active {
+			if strings.HasPrefix(entry.Name(), ".pending-") {
+				if err := os.Remove(filepath.Join(s.dir, entry.Name())); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	for _, sub := range []string{"backups", "runtime"} {
+		entries, err := os.ReadDir(filepath.Join(s.root, sub))
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), ".pending-") {
+				if err := os.Remove(filepath.Join(s.root, sub, entry.Name())); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
@@ -135,7 +198,13 @@ func ValidateSpec(kind string, s Spec) error {
 	if len(s.Headers) > 32 {
 		return invalid("too many headers")
 	}
+	headerNames := map[string]bool{}
 	for key, value := range s.Headers {
+		canonical := http.CanonicalHeaderKey(key)
+		if headerNames[canonical] {
+			return invalid("duplicate source header")
+		}
+		headerNames[canonical] = true
 		for _, c := range key {
 			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", c)) {
 				return invalid("invalid source header name")
@@ -149,6 +218,27 @@ func ValidateSpec(kind string, s Spec) error {
 		b, _ := json.Marshal(s.Processing)
 		if string(b) != "{}" {
 			return invalid("files do not accept node processing")
+		}
+	}
+	if s.Refresh.IntervalSeconds != 0 && (s.Refresh.IntervalSeconds < 60 || s.Refresh.IntervalSeconds > 30*86400) {
+		return invalid("refresh interval must be 60–2592000 seconds")
+	}
+	if s.Refresh.Enabled && s.Source != "remote" {
+		return invalid("automatic refresh requires a remote source")
+	}
+	seen := map[string]bool{}
+	for _, target := range s.Refresh.Targets {
+		if seen[target] {
+			return invalid("duplicate refresh target")
+		}
+		seen[target] = true
+		switch target {
+		case "shadowrocket", "loon", "egern", "clash", "uri":
+			if kind == "files" {
+				return invalid("file refresh has no target list")
+			}
+		default:
+			return invalid("invalid refresh target")
 		}
 	}
 	if err := s.Processing.Validate(); err != nil {
@@ -275,6 +365,9 @@ func (s *Store) put(r Record) error {
 	return nil
 }
 func (s *Store) Save(kind, id string, spec Spec) (Record, error) {
+	return s.SaveVersion(kind, id, spec, "")
+}
+func (s *Store) SaveVersion(kind, id string, spec Spec, expected string) (Record, error) {
 	if err := ValidateSpec(kind, spec); err != nil {
 		return Record{}, err
 	}
@@ -294,6 +387,9 @@ func (s *Store) Save(kind, id string, spec Spec) (Record, error) {
 		}
 		if old.Kind != kind {
 			return Record{}, ErrNotFound
+		}
+		if expected != "" && expected != revision(old) {
+			return Record{}, ErrConflict
 		}
 		r.ID = id
 		r.ShareDigest = old.ShareDigest

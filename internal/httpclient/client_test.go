@@ -335,3 +335,21 @@ func TestGetToLimitsAndGzip(t *testing.T) {
 		}
 	}
 }
+
+func TestConditionalMetadata304(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") != `"version"` {
+			t.Error("validator missing")
+		}
+		w.Header().Set("ETag", `"version"`)
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(http.StatusNotModified)
+	}))
+	defer srv.Close()
+	c := NewClient(5, 1024)
+	var b bytes.Buffer
+	status, headers, err := c.GetToWithMetadata(context.Background(), srv.URL, map[string]string{"If-None-Match": `"version"`}, &b)
+	if err != nil || status != 304 || headers.Get("ETag") != `"version"` || b.Len() != 0 {
+		t.Fatalf("%d %v %v", status, headers, err)
+	}
+}

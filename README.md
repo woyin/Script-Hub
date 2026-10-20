@@ -47,7 +47,7 @@ docker run --rm -p 9100:9100 ghcr.io/woyin/script-hub/script-hub:latest
 
 仓库内 `fly.toml` 使用 `breestealth-scripthub-go`、新加坡区域和 9100 端口。Fly.io 健康检查请求 `GET /healthz`。
 
-`[build].image` 指向 GitHub Actions 发布的 `ghcr.io/woyin/script-hub/script-hub:1.1.1-beta`，部署只拉取现成镜像，不在本地或 Fly builder 再次编译。版本 Git 标签为 `v1.1.1-beta`，镜像同时发布 `1.1-beta`、`1.1.1-beta`、`v1.1.1-beta` 和 `latest`。`latest` 随后续主分支构建更新；`1.1-beta` 跟随 1.1 系列 beta 更新；需要固定此版本时使用 `1.1.1-beta`。正式部署前等待对应镜像工作流成功。
+`[build].image` 指向 GitHub Actions 发布的 `ghcr.io/woyin/script-hub/script-hub:1.1.2-beta`，部署只拉取现成镜像，不在本地或 Fly builder 再次编译。版本 Git 标签为 `v1.1.2-beta`，镜像同时发布 `1.1-beta`、`1.1.2-beta`、`v1.1.2-beta` 和 `latest`。`latest` 随后续主分支构建更新；`1.1-beta` 跟随 1.1 系列 beta 更新；需要固定此版本时使用 `1.1.2-beta`。正式部署前等待对应镜像工作流成功。
 
 部署前创建同区域的 1 GB Volume（已有同名卷时不要重复创建）：
 
@@ -354,7 +354,7 @@ Fly 使用自己的密钥管理：
 # .env 内只放准备上传到 Fly 的环境变量和秘密；不要提交该文件。
 fly secrets import < .env
 # 等待包含本功能的 GitHub Actions 镜像发布成功后，直接部署现成镜像。
-fly deploy --image ghcr.io/woyin/script-hub/script-hub:1.1.1-beta --ha=false
+fly deploy --image ghcr.io/woyin/script-hub/script-hub:1.1.2-beta --ha=false
 ```
 
 `1.1-beta` 包含管理模块；旧的 `1.0-beta` 不包含。部署直接使用 Actions 发布的镜像，无需本地重新编译。
@@ -363,11 +363,11 @@ fly deploy --image ghcr.io/woyin/script-hub/script-hub:1.1.1-beta --ha=false
 
 ### 存储、缓存与资源边界
 
-资源保存到 `MANAGER_DATA_DIR`，目录权限 0700、资源 JSON 权限 0600。写入通过临时文件和原子替换完成，失败保留旧资源。默认最多 256 个资源，单份管理请求和资源文档最大 8 MiB，合并最多 16 个来源、10000 个节点。私有持久数据不参与缓存淘汰，也不能放进 `/data/cache`；启动时会校验目录重叠（包含符号链接）。需要自行备份管理数据，规则缓存则可以重建。
+资源保存到 `MANAGER_DATA_DIR`，目录权限 0700、资源 JSON 权限 0600。写入通过临时文件和原子替换完成，失败保留旧资源。默认最多 256 个资源，单份管理请求和资源文档最大 8 MiB，合并最多 16 个来源、10000 个节点。私有持久数据不参与缓存淘汰，也不能放进 `/data/cache`；启动时会校验目录重叠（包含符号链接）。系统每日创建本地快照，也可在“我的 → 备份与恢复”下载独立副本；规则缓存可以重建。
 
 远程读取复用 SSRF、解压后大小限制和超时。任何来源失败都会中止导出，不输出部分订阅。导出产物复用磁盘结果缓存，缓存 TTL 与 `CACHE_TTL_SECONDS` 一致；资源更新自动更换缓存键。撤销分享先通过权限检查阻断，即使磁盘缓存还存在也不能读取。管理员可强制更新，失败保留原有有效缓存。
 
-节点解析、去重和排序需要内存，不能直接沿用规则流式转换的内存结论，因此私有导出有独立的 `MANAGER_CONCURRENCY`。本轮自动测试不代表已完成实际客户端导入、握手或连通性验收，尤其是 Shadowrocket 的专有参数、Reality/特殊传输组合。遇到未实现参数时会明确报错；需要实际节点样本后再逐项补齐。
+节点解析、去重和排序需要内存，不能直接沿用规则流式转换的内存结论，因此私有导出有独立的 `MANAGER_CONCURRENCY`。用户已确认当前 Shadowrocket、Loon、Egern 客户端测试通过；这不扩大 capabilities 中声明的协议与参数范围。遇到未实现参数时会明确报错；需要实际节点样本后再逐项补齐。
 
 ### 管理接口
 
@@ -397,3 +397,41 @@ fly deploy --image ghcr.io/woyin/script-hub/script-hub:1.1.1-beta --ha=false
 创建响应包含资源 `id`、`spec` 和更新时间。分享接口只在生成时返回 `path`，例如 `/share/subscriptions/<id>/<token>`；客户端可追加 `?target=clash|shadowrocket|uri|loon|egern`。文件分享直接返回文本。轮换分享后旧 token 立即失效；已开始发送的响应不会被中途截断。
 
 管理页的导航、卡片、编辑表单和日间/夜间主题按原版 Sub-Store 前端适配，支持桌面侧栏和手机底部导航。仅显示已实现的功能。界面来源、上游版本和素材许可见 [UI-NOTICE.md](internal/manager/UI-NOTICE.md)。
+
+
+### 1.1.2-beta：订阅缓存、刷新与数据保护
+
+- 原始源文件与导出结果共享 `CACHE_MAX_BYTES` 磁盘预算，包含临时文件和读取中的旧文件，按实际字节计量。内存只保存索引、状态和当前转换所需节点。源键包含完整 URL 和规范化后的请求头，不同凭据隔离；正文和明文 URL 不进入指标或状态文件。同源并发下载合并，持久化 ETag/Last-Modified，支持 HTTP 304。
+- 源与结果的正常有效期使用 `CACHE_TTL_SECONDS`（Fly 86400 秒），额外保留 86400 秒供失败回退与条件更新。额外保留数据仍可因容量不足被淘汰，回退不是永久副本。普通读取失败时，只有同一配置版本且仍在保留期内的结果可回退；响应包含 `X-ScriptHub-Cache: STALE`、`X-ScriptHub-Stale: true` 和 `X-ScriptHub-Generated-At`。管理强制刷新始终报告真实失败，不以回退冒充成功。
+- 每个远程订阅或文件可配置 `refresh`。默认关闭，周期默认 21600 秒，范围 60–2592000 秒；订阅默认生成 Shadowrocket、Loon、Egern。文件没有目标列表。后台每 15 秒检查任务，单后台 worker 与前台共享私有导出并发额度；执行时间会错开，失败按 1/2/4/8/16/32 分钟退避并错开，重启保留下一次执行时间。批量刷新订阅先获取一次源快照并解析，再生成各目标；单个目标失败不覆盖该目标旧结果。保存/删除/恢复后，旧任务不能发布为当前结果。
+
+```json
+{
+  "name": "我的订阅",
+  "source": "remote",
+  "urls": ["https://example.com/subscription"],
+  "refresh": {
+    "enabled": true,
+    "intervalSeconds": 21600,
+    "targets": ["shadowrocket", "loon", "egern"],
+    "disableStale": false
+  }
+}
+```
+
+管理前缀仍为 `/manage/<MANAGER_BACKEND_KEY>`，新增接口均需管理权限：
+
+| 接口 | 用途 |
+|---|---|
+| `GET /api/status` | 各资源最近尝试、成功、下次执行及各目标状态；不返回源地址或凭据 |
+| `GET /api/metrics` | 当前进程累计缓存、下载、304、回退、错误及阶段耗时；同类无私密标签的指标同时附加到 `/metrics` |
+| `POST /api/{subscriptions\|files}/{id}/refresh` | JSON 请求，立即刷新配置的全部目标；失败返回 422，详情查看 status |
+| `GET/POST /api/backups` | 列出快照或创建快照；POST 使用 JSON 请求 |
+| `GET /api/backups/{name}` | 下载 `.tar.gz` 备份 |
+| `POST /api/restore` | `Content-Type: application/gzip`，请求体为备份文件；完整校验并备份当前数据后原子替换全部资源 |
+
+资源 GET 返回 `version` 字段和 `ETag`。**资源 PUT 必须发送 `If-Match: <version>`**；缺失返回 428，版本冲突返回 409。管理页会保留冲突草稿，允许重新加载最新版本。分享轮换不改变编辑版本，保存时仍保留当前分享摘要。
+
+快照保存在 `MANAGER_DATA_DIR/backups`，最多 5 份、合计最多 64 MiB；实际写入时检查预算，没有预分配空间。正在下载的快照不会被轮换删除。快照包含订阅凭据和分享摘要，不包含 Backend Key、缓存和运行指标。恢复会替换所有资源、保留备份中的资源 ID 和分享权限，并生成新编辑/缓存版本；因此备份中曾存在的分享权限也会恢复，界面会在恢复前提示。损坏、超限或包含非法路径的备份不会覆盖当前数据；当前数据的安全快照创建失败也会取消恢复。
+
+资源代次通过 `.active` 原子切换，旧格式资源目录可直接读取，无需手工迁移。恢复过程暂时需要旧代与新代文件共存；这些是真实写入字节，不作固定空间预留。Volume 内快照主要用于误操作恢复；需要独立副本时请下载并妥善保管。

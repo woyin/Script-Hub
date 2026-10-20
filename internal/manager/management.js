@@ -81,12 +81,18 @@ async function responseError(r) {
         ? j.error
         : j.error?.message || j.message || msg;
   } catch {}
-  return new Error(msg || `请求失败 (${r.status})`);
+  const error = new Error(
+    r.status === 409
+      ? "资源已被其他页面修改。请保留当前编辑或重新加载最新版本。"
+      : msg || `请求失败 (${r.status})`,
+  );
+  error.status = r.status;
+  return error;
 }
-async function api(path, method = "GET", body) {
+async function api(path, method = "GET", body, headers = {}) {
   const options = {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
     cache: "no-store",
     referrerPolicy: "no-referrer",
   };
@@ -280,7 +286,13 @@ async function loadPage() {
       rows = all.flat().filter((r) => r.shared);
     } else rows = await api(state.page);
     if (generation !== state.generation) return;
-    state.rows = rows;
+    const statuses = await api("status");
+    if (generation !== state.generation) return;
+    const byId = new Map(statuses.map((v) => [v.kind + "/" + v.id, v]));
+    state.rows = rows.map((r) => ({
+      ...r,
+      status: byId.get(r.kind + "/" + r.id),
+    }));
     renderList();
   } catch (e) {
     if (generation !== state.generation) return;
@@ -360,7 +372,7 @@ function renderList() {
     const details = r.source === "remote" ? "远程订阅" : "本地订阅";
     card.innerHTML =
       art(r.kind) +
-      `<div class="card-content"><div class="card-title-row"><h2 class="card-title" title="${esc(r.name)}">${esc(r.name)}</h2>${r.shared ? '<span class="badge">已分享</span>' : ""}<div class="card-actions">${button("预览 " + r.name, "eye", "preview", "secondary-action")}${button("分享 " + r.name, "share", "share", "secondary-action")}${button("强制更新 " + r.name, "refresh", "refresh", "secondary-action")}${button("编辑 " + r.name, "edit", "edit")}${button("更多 " + r.name, "more", "more")}</div></div><p class="card-detail">${r.kind === "files" ? (r.source === "remote" ? "远程文件" : "本地文件") : details}${isShare ? " · " + (r.kind === "files" ? "文件" : "订阅") : ""}</p><p class="card-detail">更新于 ${esc(formatDate(r.updatedAt))}</p></div>`;
+      `<div class="card-content"><div class="card-title-row"><h2 class="card-title" title="${esc(r.name)}">${esc(r.name)}</h2>${r.shared ? '<span class="badge">已分享</span>' : ""}<div class="card-actions">${button("预览 " + r.name, "eye", "preview", "secondary-action")}${button("分享 " + r.name, "share", "share", "secondary-action")}${button("强制更新 " + r.name, "refresh", "refresh", "secondary-action")}${button("编辑 " + r.name, "edit", "edit")}${button("更多 " + r.name, "more", "more")}</div></div><p class="card-detail">${r.kind === "files" ? (r.source === "remote" ? "远程文件" : "本地文件") : details}${isShare ? " · " + (r.kind === "files" ? "文件" : "订阅") : ""}</p><p class="card-detail">更新于 ${esc(formatDate(r.updatedAt))}</p><p class="card-detail">${esc(refreshSummary(r.status))}</p></div>`;
     card.onclick = run(() => edit(r.kind, r.id));
     card.onkeydown = run((e) => {
       if (e.target === card && (e.key === "Enter" || e.key === " ")) {
@@ -460,7 +472,7 @@ function renderEditor() {
       Object.entries(s.headers || {})
         .map(([k, v]) => k + ": " + v)
         .join("\n"),
-    )}</textarea></div></div></div>${file ? "" : `<h2 class="group-title">订阅操作</h2><div class="form-card"><div class="field-row"><label for="include">保留节点</label><input id="include" type="text" placeholder="名称正则表达式" value="${esc(p.include || "")}"></div><div class="field-row"><label for="exclude">排除节点</label><input id="exclude" type="text" placeholder="名称正则表达式" value="${esc(p.exclude || "")}"></div><div class="field-row"><label for="deduplicate">节点去重</label><input class="switch" id="deduplicate" type="checkbox" ${p.deduplicate ? "checked" : ""}></div><div class="field-row"><label for="sort">按名称排序</label><input class="switch" id="sort" type="checkbox" ${p.sort ? "checked" : ""}></div></div><h2 class="group-title">重命名</h2><div class="form-card"><div id="renameList"></div><div class="editor-toolbar"><span class="hint" style="padding:0">按顺序应用正则替换</span><button type="button" id="addRename">+ 添加操作</button></div></div>`}<p class="hint">保存后，导出和分享将使用新的配置。</p><div class="editor-actions">${e.id ? '<button type="button" class="plain-button danger-button" id="delete">删除' + (file ? "文件" : "订阅") + "</button>" : '<button type="button" class="plain-button" id="cancelEdit">取消</button>'}<button type="submit" class="primary-button" id="save">保存</button></div></form>${e.id ? '<div class="editor-actions"><button class="plain-button" id="editorPreview">预览导出</button><button class="plain-button" id="editorShare">分享</button></div>' : ""}`;
+    )}</textarea></div></div></div>${file ? "" : `<h2 class="group-title">订阅操作</h2><div class="form-card"><div class="field-row"><label for="include">保留节点</label><input id="include" type="text" placeholder="名称正则表达式" value="${esc(p.include || "")}"></div><div class="field-row"><label for="exclude">排除节点</label><input id="exclude" type="text" placeholder="名称正则表达式" value="${esc(p.exclude || "")}"></div><div class="field-row"><label for="deduplicate">节点去重</label><input class="switch" id="deduplicate" type="checkbox" ${p.deduplicate ? "checked" : ""}></div><div class="field-row"><label for="sort">按名称排序</label><input class="switch" id="sort" type="checkbox" ${p.sort ? "checked" : ""}></div></div><h2 class="group-title">重命名</h2><div class="form-card"><div id="renameList"></div><div class="editor-toolbar"><span class="hint" style="padding:0">按顺序应用正则替换</span><button type="button" id="addRename">+ 添加操作</button></div></div>`}${refreshSettings(s, file)}<p class="hint">保存后，导出和分享将使用新的配置。</p><div class="editor-actions">${e.id ? '<button type="button" class="plain-button danger-button" id="delete">删除' + (file ? "文件" : "订阅") + "</button>" : '<button type="button" class="plain-button" id="cancelEdit">取消</button>'}<button type="submit" class="primary-button" id="save">保存</button></div></form>${e.id ? '<div class="editor-actions"><button class="plain-button" id="editorPreview">预览导出</button><button class="plain-button" id="editorShare">分享</button></div>' : ""}`;
   $("editorForm").oninput = () => {
     state.dirty = true;
   };
@@ -499,6 +511,10 @@ function toggleSource() {
     document.querySelector("input[name=source]:checked").value === "remote";
   $("localFields").hidden = remote;
   $("remoteFields").hidden = !remote;
+  if ($("autoRefresh")) {
+    $("autoRefresh").disabled = !remote;
+    if (!remote) $("autoRefresh").checked = false;
+  }
 }
 function addRename(value = { pattern: "", replacement: "" }) {
   const row = document.createElement("div");
@@ -546,6 +562,23 @@ function editorSpec() {
       })),
     };
   }
+  spec.refresh = {
+    enabled: $("autoRefresh").checked,
+    intervalSeconds: Number($("refreshInterval").value),
+    disableStale: !$("allowStale").checked,
+  };
+  if (state.editor.kind === "subscriptions")
+    spec.refresh.targets = [
+      ...document.querySelectorAll('input[name="refreshTarget"]:checked'),
+    ].map((e) => e.value);
+  if (state.editor.kind === "subscriptions" && !spec.refresh.targets.length)
+    throw new Error("请至少选择一个刷新目标");
+  if (
+    !Number.isInteger(spec.refresh.intervalSeconds) ||
+    spec.refresh.intervalSeconds < 60 ||
+    spec.refresh.intervalSeconds > 2592000
+  )
+    throw new Error("刷新间隔需为 60–2592000 秒的整数");
   return spec;
 }
 async function saveEditor() {
@@ -559,11 +592,25 @@ async function saveEditor() {
       e.kind + (e.id ? "/" + e.id : ""),
       e.id ? "PUT" : "POST",
       spec,
+      e.id ? { "If-Match": e.version } : {},
     );
     state.editor = record;
     state.dirty = false;
     notify("保存成功");
     await go(e.kind);
+  } catch (error) {
+    if (error.status === 409) {
+      modal(
+        "编辑冲突",
+        '<p class="confirm-message">此资源已被修改。当前编辑仍保留，请选择继续保留，或放弃当前修改并加载最新版本。</p><div class="modal-actions"><button id="keepDraft" class="plain-button">保留当前编辑</button><button id="reloadRecord" class="primary-button">加载最新版本</button></div>',
+      );
+      $("keepDraft").onclick = closeModal;
+      $("reloadRecord").onclick = run(async () => {
+        closeModal();
+        state.dirty = false;
+        await edit(e.kind, e.id);
+      });
+    } else throw error;
   } finally {
     buttons.forEach((b) => (b.disabled = false));
   }
@@ -665,7 +712,14 @@ async function preview(context, force) {
     $("output").value = text;
     $("download").disabled = false;
     $("outputStatus").textContent =
-      "导出完成 · " + (r.headers.get("X-ScriptHub-Cache") || "OK");
+      (r.headers.get("X-ScriptHub-Stale") === "true"
+        ? "刷新失败，正在使用过期结果"
+        : "导出完成") +
+      " · " +
+      (r.headers.get("X-ScriptHub-Cache") || "OK") +
+      (r.headers.get("X-ScriptHub-Generated-At")
+        ? " · 生成于 " + formatDate(r.headers.get("X-ScriptHub-Generated-At"))
+        : "");
   } catch (e) {
     if (
       state.output === context &&
@@ -783,8 +837,20 @@ async function copyText(text) {
 function openMore(record) {
   modal(
     record.name,
-    `<button class="settings-row" id="morePreview"><span class="settings-label">${icon("eye")}预览导出</span>${icon("right")}</button><button class="settings-row" id="moreRefresh"><span class="settings-label">${icon("refresh")}强制更新</span>${icon("right")}</button><button class="settings-row" id="moreShare"><span class="settings-label">${icon("share")}分享</span>${icon("right")}</button><button class="settings-row" id="moreEdit"><span class="settings-label">${icon("edit")}编辑</span>${icon("right")}</button><button class="settings-row danger-button" id="moreDelete"><span class="settings-label">${icon("trash")}删除</span>${icon("right")}</button>`,
+    `<button class="settings-row" id="resourceStatus"><span class="settings-label">${icon("info")}刷新状态与计划</span>${icon("right")}</button><button class="settings-row" id="refreshAll"><span class="settings-label">${icon("refresh")}刷新全部目标</span>${icon("right")}</button><button class="settings-row" id="morePreview"><span class="settings-label">${icon("eye")}预览导出</span>${icon("right")}</button><button class="settings-row" id="moreRefresh"><span class="settings-label">${icon("refresh")}强制更新</span>${icon("right")}</button><button class="settings-row" id="moreShare"><span class="settings-label">${icon("share")}分享</span>${icon("right")}</button><button class="settings-row" id="moreEdit"><span class="settings-label">${icon("edit")}编辑</span>${icon("right")}</button><button class="settings-row danger-button" id="moreDelete"><span class="settings-label">${icon("trash")}删除</span>${icon("right")}</button>`,
   );
+  $("resourceStatus").onclick = run(() => showResourceStatus(record));
+  $("refreshAll").onclick = run(async () => {
+    const b = $("refreshAll");
+    b.disabled = true;
+    try {
+      await api(record.kind + "/" + record.id + "/refresh", "POST", {});
+      notify("目标格式已全部刷新");
+      await showResourceStatus(record);
+    } finally {
+      b.disabled = false;
+    }
+  });
   $("morePreview").onclick = () => openExport(record);
   $("moreRefresh").onclick = () => openExport(record, true);
   $("moreShare").onclick = () => openShare(record);
@@ -812,7 +878,9 @@ async function deleteResource(record) {
 function renderProfile() {
   $("page").classList.remove("simple");
   $("page").innerHTML =
-    `<div class="profile-hero">${art("subscriptions")}<div><h2>Sub-Store</h2><p>Script Hub · 原生 Go 后端</p></div></div><h2 class="group-title">外观设置</h2><div class="form-card"><button class="settings-row" id="profileTheme"><span class="settings-label">${icon("sun")}主题</span><span class="settings-value">${preferences.theme === "dark" ? "基础夜间" : "基础日间"}</span></button><div class="settings-row"><label class="settings-label" for="simpleSetting">${icon("simple")}简洁模式</label><input type="checkbox" class="switch" id="simpleSetting" ${preferences.simple ? "checked" : ""}></div><div class="settings-row"><label class="settings-label" for="dualSetting">${icon("grid")}双列显示</label><input type="checkbox" class="switch" id="dualSetting" ${preferences.dual ? "checked" : ""}></div></div><h2 class="group-title">后端</h2><div class="form-card"><div class="settings-row"><span class="settings-label">${icon("shield")}连接状态</span><span class="settings-value">当前 Backend URL</span></div><button class="settings-row" id="capabilities"><span class="settings-label">${icon("info")}兼容范围</span>${icon("right")}</button></div><h2 class="group-title">关于</h2><div class="form-card"><a class="settings-row" href="https://github.com/sub-store-org/Sub-Store-Front-End" target="_blank" rel="noreferrer noopener"><span class="settings-label">${icon("code")}原版前端</span><span class="settings-value">Sub-Store Front-End · GPL-3.0</span></a><a class="settings-row" href="https://github.com/woyin/Script-Hub" target="_blank" rel="noreferrer noopener"><span class="settings-label">${icon("code")}项目源码</span>${icon("right")}</a></div><p class="page-footer">Sub-Store 界面适配 · Script Hub<br>界面设计与素材遵循 GPL-3.0</p>`;
+    `<div class="profile-hero">${art("subscriptions")}<div><h2>Sub-Store</h2><p>Script Hub · 原生 Go 后端</p></div></div><h2 class="group-title">外观设置</h2><div class="form-card"><button class="settings-row" id="profileTheme"><span class="settings-label">${icon("sun")}主题</span><span class="settings-value">${preferences.theme === "dark" ? "基础夜间" : "基础日间"}</span></button><div class="settings-row"><label class="settings-label" for="simpleSetting">${icon("simple")}简洁模式</label><input type="checkbox" class="switch" id="simpleSetting" ${preferences.simple ? "checked" : ""}></div><div class="settings-row"><label class="settings-label" for="dualSetting">${icon("grid")}双列显示</label><input type="checkbox" class="switch" id="dualSetting" ${preferences.dual ? "checked" : ""}></div></div><h2 class="group-title">后端</h2><div class="form-card"><div class="settings-row"><span class="settings-label">${icon("shield")}连接状态</span><span class="settings-value">当前 Backend URL</span></div><button class="settings-row" id="capabilities"><span class="settings-label">${icon("info")}兼容范围</span>${icon("right")}</button></div><h2 class="group-title">数据与运行状态</h2><div class="form-card"><button class="settings-row" id="backupManager"><span class="settings-label">${icon("download")}备份与恢复</span>${icon("right")}</button><button class="settings-row" id="managerMetrics"><span class="settings-label">${icon("info")}运行指标</span>${icon("right")}</button></div><h2 class="group-title">关于</h2><div class="form-card"><a class="settings-row" href="https://github.com/sub-store-org/Sub-Store-Front-End" target="_blank" rel="noreferrer noopener"><span class="settings-label">${icon("code")}原版前端</span><span class="settings-value">Sub-Store Front-End · GPL-3.0</span></a><a class="settings-row" href="https://github.com/woyin/Script-Hub" target="_blank" rel="noreferrer noopener"><span class="settings-label">${icon("code")}项目源码</span>${icon("right")}</a></div><p class="page-footer">Sub-Store 界面适配 · Script Hub<br>界面设计与素材遵循 GPL-3.0</p>`;
+  $("backupManager").onclick = run(showBackups);
+  $("managerMetrics").onclick = run(showMetrics);
   $("profileTheme").onclick = () => {
     preferences.theme = preferences.theme === "light" ? "dark" : "light";
     persistAppearance();
@@ -895,3 +963,157 @@ run(async () => {
     await loadPage();
   }
 })();
+
+function refreshSummary(status) {
+  if (!status) return "";
+  const success =
+    status.lastSuccess && !status.lastSuccess.startsWith("0001-")
+      ? "最近成功 " + formatDate(status.lastSuccess)
+      : "尚未刷新";
+  return (status.error ? "刷新失败 · " : "") + success;
+}
+function refreshSettings(spec, file) {
+  const policy = spec.refresh || {},
+    chosen = policy.targets?.length
+      ? policy.targets
+      : ["shadowrocket", "loon", "egern"];
+  return `<h2 class="group-title">刷新设置</h2><div class="form-card"><div class="field-row"><label for="autoRefresh">自动刷新</label><input class="switch" id="autoRefresh" type="checkbox" ${policy.enabled ? "checked" : ""}></div><div class="field-row"><label for="refreshInterval">间隔（秒）</label><input type="number" id="refreshInterval" min="60" max="2592000" step="1" value="${Number(policy.intervalSeconds) || 21600}"></div>${file ? "" : `<div class="block-field"><span>目标格式</span><div class="refresh-targets">${targets.map(([value, label]) => `<label><input type="checkbox" name="refreshTarget" value="${value}" ${chosen.includes(value) ? "checked" : ""}>${label}</label>`).join("")}</div></div>`}<div class="field-row"><label for="allowStale">失败时使用最近成功结果</label><input class="switch" id="allowStale" type="checkbox" ${policy.disableStale ? "" : "checked"}></div></div><p class="hint">自动刷新适用于远程来源。默认每 6 小时刷新；过期结果最多再使用 24 小时。强制刷新会明确报告失败。</p>`;
+}
+async function showResourceStatus(record) {
+  const [resource, statuses] = await Promise.all([
+    api(record.kind + "/" + record.id),
+    api("status"),
+  ]);
+  const s =
+    statuses.find((v) => v.id === record.id && v.kind === record.kind) || {};
+  const date = (v) => (v && !v.startsWith("0001-") ? formatDate(v) : "—");
+  modal(
+    "刷新状态",
+    `<p class="export-name">${esc(resource.spec.name)}</p><div class="form-card"><div class="settings-row"><span>自动刷新</span><span>${resource.spec.refresh?.enabled ? "已开启" : "未开启"}</span></div><div class="settings-row"><span>最近尝试</span><span>${esc(date(s.lastAttempt))}</span></div><div class="settings-row"><span>最近成功</span><span>${esc(date(s.lastSuccess))}</span></div><div class="settings-row"><span>下次刷新</span><span>${resource.spec.refresh?.enabled ? esc(date(s.nextRun)) : "—"}</span></div></div><div id="targetStatuses"></div>`,
+  );
+  for (const [target, v] of Object.entries(s.targets || {})) {
+    const item = document.createElement("p");
+    item.className = "hint";
+    item.textContent =
+      target +
+      " · " +
+      (v.error ? "刷新失败" : "成功") +
+      " · " +
+      date(v.lastSuccess);
+    $("targetStatuses").appendChild(item);
+  }
+}
+async function showMetrics() {
+  const m = await api("metrics");
+  const labels = {
+    sourceHits: "源缓存命中",
+    sourceMisses: "上游请求",
+    notModified: "上游内容未变化（304）",
+    fetchErrors: "下载失败",
+    outputHits: "导出缓存命中",
+    outputMisses: "导出生成",
+    staleResponses: "过期结果回退",
+    exportErrors: "导出失败",
+  };
+  modal(
+    "运行指标",
+    '<p class="hint">当前进程累计值，重启后重新计数。</p><div class="form-card" id="metricRows"></div>',
+  );
+  for (const [key, label] of Object.entries(labels)) {
+    const row = document.createElement("div");
+    row.className = "settings-row";
+    row.innerHTML = `<span>${label}</span><span>${Number(m[key]) || 0}</span>`;
+    $("metricRows").appendChild(row);
+  }
+  for (const [key, v] of Object.entries(m.stages || {})) {
+    const row = document.createElement("p");
+    row.className = "hint";
+    row.textContent =
+      ({ fetch: "源文件读取", parse_process: "解析与处理", export: "导出" }[
+        key
+      ] || key) +
+      "：" +
+      v.count +
+      " 次，累计 " +
+      Number(v.seconds).toFixed(3) +
+      " 秒";
+    $("dialogBody").appendChild(row);
+  }
+}
+async function showBackups() {
+  const rows = await api("backups");
+  modal(
+    "备份与恢复",
+    '<p class="hint">备份包含订阅地址和凭据，请妥善保管。最多保留 5 份、合计 64 MiB；每日自动创建一份。</p><div class="modal-actions"><button class="primary-button" id="createBackup">创建备份</button><button class="plain-button" id="chooseRestore">导入并恢复</button></div><input id="restoreFile" type="file" accept=".gz,application/gzip" hidden><div id="backupRows"></div>',
+  );
+  for (const b of rows.slice().reverse()) {
+    const item = document.createElement("div");
+    item.className = "settings-row";
+    const text = document.createElement("span");
+    text.textContent =
+      formatDate(b.createdAt) + " · " + (b.bytes / 1024).toFixed(1) + " KiB";
+    const link = document.createElement("a");
+    link.textContent = "下载";
+    link.href = base + "/api/backups/" + encodeURIComponent(b.name);
+    link.download = b.name;
+    link.referrerPolicy = "no-referrer";
+    item.append(text, link);
+    $("backupRows").appendChild(item);
+  }
+  $("createBackup").onclick = run(async () => {
+    const b = $("createBackup");
+    b.disabled = true;
+    try {
+      await api("backups", "POST", {});
+      await showBackups();
+      notify("备份已创建");
+    } finally {
+      b.disabled = false;
+    }
+  });
+  $("chooseRestore").onclick = () => $("restoreFile").click();
+  $("restoreFile").onchange = run(async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    if (file.size > 64 * 1024 * 1024) throw new Error("备份文件超过 64 MiB");
+    if (
+      !(await ask(
+        "恢复将替换所有订阅和文件，并恢复备份中的分享权限。系统会先备份当前数据。是否继续？",
+        true,
+      ))
+    ) {
+      event.target.value = "";
+      return;
+    }
+    const b = $("chooseRestore");
+    b.disabled = true;
+    state.restoring = true;
+    $("closeDialog").disabled = true;
+    try {
+      const response = await fetch(base + "/api/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/gzip" },
+        body: file,
+        cache: "no-store",
+        referrerPolicy: "no-referrer",
+      });
+      if (!response.ok) throw await responseError(response);
+      const result = await response.json();
+      state.restoring = false;
+      $("closeDialog").disabled = false;
+      closeModal();
+      state.editor = null;
+      state.dirty = false;
+      await go("profile");
+      notify("已恢复 " + result.restored + " 个资源");
+    } finally {
+      b.disabled = false;
+      state.restoring = false;
+      $("closeDialog").disabled = false;
+    }
+  });
+}
+
+$("actionDialog").addEventListener("cancel", (event) => {
+  if (state.restoring) event.preventDefault();
+});

@@ -34,7 +34,7 @@ Script Hub（Go 重写版）是一个代理规则与脚本转换服务，完整�
 - [详见 FOLDER_INDEX.md](internal/config/FOLDER_INDEX.md)
 
 ### internal/manager
-- 私有订阅/文件 CRUD、独立永久数据存储、Backend URL 管理鉴权、资源级分享 token、私有导出缓存与操作页面。
+- 私有订阅/文件 CRUD、独立永久数据存储、Backend URL 管理鉴权、资源级分享 token、源/导出磁盘缓存、条件更新、后台刷新及状态指标、原子快照恢复、编辑版本校验与操作页面。
 - [详见 FOLDER_INDEX.md](internal/manager/FOLDER_INDEX.md)
 
 ### internal/subscription
