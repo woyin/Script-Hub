@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -55,11 +56,13 @@ type Spec struct {
 	Processing subscription.Options `json:"processing,omitempty"`
 }
 type Record struct {
-	ID          string    `json:"id"`
-	Kind        string    `json:"kind"`
-	Spec        Spec      `json:"spec"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-	ShareDigest string    `json:"shareDigest,omitempty"`
+	ID               string                     `json:"id"`
+	Kind             string                     `json:"kind"`
+	Spec             Spec                       `json:"spec"`
+	UpdatedAt        time.Time                  `json:"updatedAt"`
+	ShareDigest      string                     `json:"shareDigest,omitempty"`
+	SubStore         map[string]json.RawMessage `json:"substore,omitempty"`
+	SubStorePosition int64                      `json:"substorePosition,omitempty"`
 }
 type Summary struct {
 	ID        string    `json:"id"`
@@ -74,6 +77,28 @@ func (r Record) Summary() Summary {
 	return Summary{r.ID, r.Kind, r.Spec.Name, r.Spec.Source, r.UpdatedAt, r.ShareDigest != ""}
 }
 
+// resourceMeta deliberately excludes URLs, headers and content. The index is rebuilt
+// once at startup; mutations publish disk data before updating this small index.
+type resourceMeta struct {
+	Summary     Summary
+	Refresh     RefreshPolicy
+	ShareDigest string
+	Digest      string
+	Position    int64
+}
+
+func metadataFor(r Record) resourceMeta {
+	semantic := r
+	semantic.UpdatedAt = time.Time{}
+	b, _ := json.Marshal(semantic)
+	policy := r.Spec.Refresh
+	policy.Targets = append([]string(nil), policy.Targets...)
+	return resourceMeta{r.Summary(), policy, r.ShareDigest, digest(string(b)), r.SubStorePosition}
+}
+func (m resourceMeta) record() Record {
+	return Record{ID: m.Summary.ID, Kind: m.Summary.Kind, UpdatedAt: m.Summary.UpdatedAt, ShareDigest: m.ShareDigest, Spec: Spec{Refresh: m.Refresh}}
+}
+
 type Store struct {
 	mu         sync.RWMutex
 	backupMu   sync.Mutex
@@ -81,6 +106,8 @@ type Store struct {
 	dir        string
 	root       string
 	maxBytes   int64
+	index      map[string]resourceMeta
+	changed    chan struct{}
 }
 
 func NewStore(dir string, maxBytes int64) (*Store, error) {
@@ -96,7 +123,7 @@ func NewStore(dir string, maxBytes int64) (*Store, error) {
 	if err := os.Chmod(dir, 0700); err != nil {
 		return nil, errors.New("cannot secure management data directory")
 	}
-	s := &Store{dir: dir, root: dir, maxBytes: maxBytes, backupPins: map[string]int{}}
+	s := &Store{dir: dir, root: dir, maxBytes: maxBytes, backupPins: map[string]int{}, index: map[string]resourceMeta{}, changed: make(chan struct{}, 1)}
 	if b, err := os.ReadFile(filepath.Join(dir, ".active")); err == nil {
 		name := string(b)
 		if !regexp.MustCompile(`^records-[a-f0-9]{64}$`).MatchString(name) {
@@ -161,7 +188,37 @@ func NewStore(dir string, maxBytes int64) (*Store, error) {
 	}
 	probe.Close()
 	os.Remove(probe.Name())
+	active, err := os.ReadDir(s.dir)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range active {
+		if !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		r, err := s.get(strings.TrimSuffix(entry.Name(), ".json"))
+		if err != nil {
+			return nil, err
+		}
+		s.index[r.ID] = metadataFor(r)
+	}
 	return s, nil
+}
+func (s *Store) notify() {
+	select {
+	case s.changed <- struct{}{}:
+	default:
+	}
+}
+func (s *Store) Meta(kind, id string) (resourceMeta, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	m, ok := s.index[id]
+	if !ok || m.Summary.Kind != kind {
+		return resourceMeta{}, ErrNotFound
+	}
+	m.Refresh.Targets = append([]string(nil), m.Refresh.Targets...)
+	return m, nil
 }
 func ValidateSpec(kind string, s Spec) error {
 	invalid := func(message string) error { return fmt.Errorf("%w: %s", ErrInvalid, message) }
@@ -292,24 +349,14 @@ func (s *Store) Get(kind, id string) (Record, error) {
 func (s *Store) List(kind string) ([]Summary, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	entries, err := os.ReadDir(s.dir)
-	if err != nil {
-		return nil, err
-	}
-	out := []Summary{}
-	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		r, err := s.get(strings.TrimSuffix(e.Name(), ".json"))
-		if err != nil {
-			return nil, err
-		}
-		if r.Kind == kind {
-			out = append(out, r.Summary())
+	rows := make([]Summary, 0, len(s.index))
+	for _, meta := range s.index {
+		if kind == "" || meta.Summary.Kind == kind {
+			rows = append(rows, meta.Summary)
 		}
 	}
-	return out, nil
+	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
+	return rows, nil
 }
 func (s *Store) put(r Record) error {
 	data, err := json.Marshal(r)
@@ -362,6 +409,8 @@ func (s *Store) put(r Record) error {
 	if err = os.Rename(f.Name(), s.path(r.ID)); err != nil {
 		return errors.New("cannot publish resource")
 	}
+	s.index[r.ID] = metadataFor(r)
+	s.notify()
 	return nil
 }
 func (s *Store) Save(kind, id string, spec Spec) (Record, error) {
@@ -393,6 +442,8 @@ func (s *Store) SaveVersion(kind, id string, spec Spec, expected string) (Record
 		}
 		r.ID = id
 		r.ShareDigest = old.ShareDigest
+		r.SubStore = old.SubStore
+		r.SubStorePosition = old.SubStorePosition
 	}
 	if err := s.put(r); err != nil {
 		return Record{}, err
@@ -409,8 +460,17 @@ func (s *Store) Delete(kind, id string) error {
 	if r.Kind != kind {
 		return ErrNotFound
 	}
-	return os.Remove(s.path(id))
+	return s.deleteLocked(r)
 }
+func (s *Store) deleteLocked(r Record) error {
+	if err := os.Remove(s.path(r.ID)); err != nil {
+		return err
+	}
+	delete(s.index, r.ID)
+	s.notify()
+	return nil
+}
+
 func (s *Store) Share(kind, id string, revoke bool) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

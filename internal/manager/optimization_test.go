@@ -181,12 +181,14 @@ func TestSchedulerSnapshotsAllTargetsAndPersistsNextRun(t *testing.T) {
 	id := create(t, h, "subscriptions", Spec{Name: "auto", Source: "remote", URLs: []string{"https://example.com/sub"}, Refresh: RefreshPolicy{Enabled: true}})
 	now := time.Now().UTC()
 	h.step(context.Background(), now)
+	h.jobs.Wait()
 	record, _ := h.store.Get("subscriptions", id)
 	status := h.runtime.get(record)
 	if len(status.Targets) != 3 || status.LastSuccess.IsZero() || !status.NextRun.After(now.Add(5*time.Hour)) || calls.Load() != 1 {
 		t.Fatalf("status=%+v calls=%d", status, calls.Load())
 	}
 	h.step(context.Background(), now.Add(time.Minute))
+	h.jobs.Wait()
 	if calls.Load() != 1 {
 		t.Fatal("refreshed before due")
 	}
@@ -199,6 +201,7 @@ func TestSchedulerSnapshotsAllTargetsAndPersistsNextRun(t *testing.T) {
 	}
 	h.cfg.Fetch = func(context.Context, string, map[string]string, io.Writer) error { return errors.New("fail") }
 	h.step(context.Background(), status.NextRun.Add(time.Second))
+	h.jobs.Wait()
 	status = h.runtime.get(record)
 	if status.Failures != 1 || status.Error == "" || status.NextRun.Before(now.Add(5*time.Hour)) {
 		t.Fatal("retry state missing", status)
@@ -318,7 +321,7 @@ func TestAdminBackupEndpointsAndMissingWriteVersion(t *testing.T) {
 	if err != nil || v.Spec.Content != "private data" {
 		t.Fatal("HTTP restore failed", err)
 	}
-	for _, path := range []string{"status", "metrics", "backups", "backups/" + b.Name} {
+	for _, path := range []string{"status", "metrics", "backup-status", "backups", "backups/" + b.Name} {
 		r := request(t, h, "GET", "/manage/wrong/api/"+path, nil)
 		if r.Code != 404 {
 			t.Fatal("unauthorized", path, r.Code)

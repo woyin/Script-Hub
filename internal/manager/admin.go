@@ -31,6 +31,18 @@ func (h *Handler) adminExtra(w http.ResponseWriter, r *http.Request, parts []str
 			h.json(w, 200, h.stats.snapshot())
 		}
 		return true
+	case "backup-status":
+		if len(parts) != 4 || r.Method != http.MethodGet {
+			h.method(w)
+		} else {
+			status, err := h.store.BackupStatus()
+			if err != nil {
+				h.storeError(w, err)
+			} else {
+				h.json(w, 200, status)
+			}
+		}
+		return true
 	case "backups":
 		if len(parts) == 4 {
 			switch r.Method {

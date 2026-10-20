@@ -100,7 +100,8 @@ func (s *Store) Snapshot() (BackupInfo, error) {
 	defer s.mu.RUnlock()
 	return s.snapshotLocked()
 }
-func (s *Store) snapshotLocked() (BackupInfo, error) {
+func (s *Store) snapshotLocked() (BackupInfo, error) { return s.snapshotAtLocked(time.Now().UTC()) }
+func (s *Store) snapshotAtLocked(checkedAt time.Time) (BackupInfo, error) {
 	dir := s.backupDir()
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return BackupInfo{}, err
@@ -122,7 +123,7 @@ func (s *Store) snapshotLocked() (BackupInfo, error) {
 	writer := &snapshotWriter{store: s, file: f, used: used, old: old}
 	gz := gzip.NewWriter(writer)
 	tw := tar.NewWriter(gz)
-	manifest, _ := json.Marshal(map[string]any{"format": 1, "createdAt": time.Now().UTC()})
+	manifest, _ := json.Marshal(map[string]any{"format": 1, "createdAt": time.Now().UTC(), "fingerprint": s.fingerprintLocked()})
 	if err = tw.WriteHeader(&tar.Header{Name: "manifest.json", Mode: 0600, Size: int64(len(manifest))}); err != nil {
 		return BackupInfo{}, err
 	}
@@ -214,6 +215,9 @@ func (s *Store) snapshotLocked() (BackupInfo, error) {
 		old = append(old[:index], old[index+1:]...)
 	}
 
+	if err = s.saveCheckpoint(backupCheckpoint{Fingerprint: s.fingerprintLocked(), Snapshot: name, CheckedAt: checkedAt}); err != nil {
+		return BackupInfo{}, err
+	}
 	return BackupInfo{name, writer.pending, time.Now().UTC()}, nil
 }
 
@@ -243,6 +247,7 @@ func (s *Store) Restore(reader io.Reader) (int, error) {
 	decoded := &budgetReader{src: gz, left: s.maxBytes + (1 << 20)}
 	tr := tar.NewReader(decoded)
 	seen := map[string]bool{}
+	restoredIndex := map[string]resourceMeta{}
 	count := 0
 	manifest := false
 	var used int64
@@ -297,6 +302,7 @@ func (s *Store) Restore(reader io.Reader) (int, error) {
 			return 0, ErrInvalid
 		}
 		r.UpdatedAt = time.Now().UTC()
+		restoredIndex[r.ID] = metadataFor(r)
 		b, err := json.Marshal(r)
 		if err != nil {
 			return 0, err
@@ -326,49 +332,65 @@ func (s *Store) Restore(reader io.Reader) (int, error) {
 	if _, err = s.snapshotLocked(); err != nil {
 		return 0, errors.New("cannot create safety backup; restore cancelled")
 	}
+	if err = s.commitGenerationLocked(stage, restoredIndex); err != nil {
+		return 0, err
+	}
+	committed = true
+	return count, nil
+}
+
+// commitGenerationLocked publishes complete resource sets through one durable
+// pointer. Restore and Sub-Store collection replacement share this commit path.
+// The caller holds Store.mu and Store.backupMu and owns stage on failure.
+func (s *Store) commitGenerationLocked(stage string, index map[string]resourceMeta) error {
+	name := filepath.Base(stage)
 	pointer, err := os.CreateTemp(s.root, ".pending-")
 	if err != nil {
-		return 0, err
+		return err
 	}
 	defer os.Remove(pointer.Name())
 	defer pointer.Close()
 	if _, err = pointer.WriteString(name); err != nil {
-		return 0, err
+		return err
 	}
 	if err = pointer.Sync(); err != nil {
-		return 0, err
+		return err
 	}
 	if err = pointer.Close(); err != nil {
-		return 0, err
+		return err
 	}
 	// Flush staged files before committing the generation pointer.
-	entries, _ := os.ReadDir(stage)
+	entries, err := os.ReadDir(stage)
+	if err != nil {
+		return err
+	}
 	for _, e := range entries {
 		f, err := os.OpenFile(filepath.Join(stage, e.Name()), os.O_RDWR, 0600)
 		if err != nil {
-			return 0, err
+			return err
 		}
 		err = f.Sync()
 		f.Close()
 		if err != nil {
-			return 0, err
+			return err
 		}
 	}
 	directory, err := os.Open(stage)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	err = directory.Sync()
 	directory.Close()
 	if err != nil {
-		return 0, err
+		return err
 	}
 	if err = os.Rename(pointer.Name(), filepath.Join(s.root, ".active")); err != nil {
-		return 0, err
+		return err
 	}
 	old := s.dir
 	s.dir = stage
-	committed = true
+	s.index = index
+	s.notify()
 	if directory, e := os.Open(s.root); e == nil {
 		_ = directory.Sync()
 		directory.Close()
@@ -383,7 +405,7 @@ func (s *Store) Restore(reader io.Reader) (int, error) {
 			}
 		}
 	}
-	return count, nil
+	return nil
 }
 
 type budgetReader struct {

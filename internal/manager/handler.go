@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/script-hub-org/script-hub/internal/cache"
@@ -24,19 +25,20 @@ import (
 
 type FetchFunc func(context.Context, string, map[string]string, io.Writer) error
 type Config struct {
-	BackendKey       string
-	DataDir          string
-	CacheDir         string
-	MaxBytes         int64
-	SourceMaxBytes   int64
-	Concurrency      int
-	Timeout          time.Duration
-	Version          string
-	Cache            *cache.Cache
-	Fetch            FetchFunc
-	FetchConditional ConditionalFetchFunc
-	CacheTTL         time.Duration
-	StaleTTL         time.Duration
+	BackendKey          string
+	DataDir             string
+	CacheDir            string
+	MaxBytes            int64
+	SourceMaxBytes      int64
+	SourceRetryCooldown time.Duration
+	Concurrency         int
+	Timeout             time.Duration
+	Version             string
+	Cache               *cache.Cache
+	Fetch               FetchFunc
+	FetchConditional    ConditionalFetchFunc
+	CacheTTL            time.Duration
+	StaleTTL            time.Duration
 }
 type flight struct {
 	forced bool
@@ -45,21 +47,30 @@ type flight struct {
 	body   types.ResponseData
 }
 type Handler struct {
-	cfg            Config
-	store          *Store
-	key            [32]byte
-	slots          chan struct{}
-	mu             sync.Mutex
-	flights        map[string]*flight
-	sourceMu       sync.Mutex
-	sourceFlights  map[string]*sourceFlight
-	stats          managerStats
-	runtime        *runtimeState
-	bgMu           sync.Mutex
-	bgCancel       context.CancelFunc
-	bgDone         chan struct{}
-	nextBackup     time.Time
-	refreshFlights map[string]*flight
+	jobs              sync.WaitGroup
+	scheduled         map[string]*scheduledJob
+	prepMu            sync.Mutex
+	preparations      map[string]*preparation
+	cfg               Config
+	store             *Store
+	key               [32]byte
+	slots             chan struct{}
+	readSlots         chan struct{}
+	compatSlots       chan struct{}
+	foregroundWaiters atomic.Int64
+	wake              chan struct{}
+	mu                sync.Mutex
+	flights           map[string]*flight
+	sourceMu          sync.Mutex
+	sourceFlights     map[string]*sourceFlight
+	sourceFailures    map[string]time.Time
+	stats             managerStats
+	runtime           *runtimeState
+	bgMu              sync.Mutex
+	bgCancel          context.CancelFunc
+	bgDone            chan struct{}
+	nextBackup        time.Time
+	refreshFlights    map[string]*flight
 }
 
 func New(cfg Config) (*Handler, error) {
@@ -91,6 +102,9 @@ func New(cfg Config) (*Handler, error) {
 	if cfg.Concurrency > 35 {
 		return nil, errors.New("management concurrency cannot exceed 35")
 	}
+	if cfg.SourceRetryCooldown <= 0 {
+		cfg.SourceRetryCooldown = 30 * time.Second
+	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 60 * time.Second
 	}
@@ -106,7 +120,17 @@ func New(cfg Config) (*Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	h := &Handler{cfg: cfg, store: store, sourceFlights: map[string]*sourceFlight{}, refreshFlights: map[string]*flight{}, key: sha256.Sum256([]byte(cfg.BackendKey)), slots: make(chan struct{}, cfg.Concurrency), flights: map[string]*flight{}}
+	h := &Handler{
+		cfg: cfg, store: store, key: sha256.Sum256([]byte(cfg.BackendKey)),
+		slots:       make(chan struct{}, cfg.Concurrency),
+		readSlots:   make(chan struct{}, max(16, min(128, cfg.Concurrency*8))),
+		compatSlots: make(chan struct{}, min(2, cfg.Concurrency)),
+		wake:        make(chan struct{}, 1),
+		scheduled:   map[string]*scheduledJob{}, preparations: map[string]*preparation{},
+		flights: map[string]*flight{}, refreshFlights: map[string]*flight{},
+		sourceFlights: map[string]*sourceFlight{}, sourceFailures: map[string]time.Time{},
+	}
+	h.nextBackup = store.nextBackupCheck()
 	h.runtime, err = newRuntimeState(data)
 	if err != nil {
 		return nil, err
@@ -124,6 +148,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.share(w, r, parts)
 		return
 	}
+	// The original Sub-Store namespace has a different /api/files contract.
+	// Keep it under /<Backend Key>, separate from the existing native UI API.
+	if len(parts) > 0 && parts[0] != "manage" {
+		key := sha256.Sum256([]byte(parts[0]))
+		if subtle.ConstantTimeCompare(key[:], h.key[:]) != 1 {
+			http.NotFound(w, r)
+			return
+		}
+		if !h.validOrigin(w, r) {
+			return
+		}
+		h.compat(w, r, 1)
+		return
+	}
 	if len(parts) < 2 || parts[0] != "manage" {
 		http.NotFound(w, r)
 		return
@@ -133,16 +171,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if origin := r.Header.Get("Origin"); origin != "" {
-		u, err := url.Parse(origin)
-		scheme := "http"
-		if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
-			scheme = "https"
-		}
-		if err != nil || u.Host != r.Host || u.Scheme != scheme || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-			h.error(w, http.StatusForbidden, "cross-origin management request rejected")
-			return
-		}
+	if !h.validOrigin(w, r) {
+		return
+	}
+	if h.compatAlias(w, r, parts) {
+		return
 	}
 	if len(parts) == 2 {
 		if r.Method != http.MethodGet {
@@ -240,18 +273,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				h.method(w)
 				return
 			}
-			gated, release, ok := h.acquire(w, r)
-			if !ok {
-				return
-			}
-			defer release()
-			r = gated
-			record, err := h.store.Get(kind, id)
-			if err != nil {
-				h.storeError(w, err)
-				return
-			}
-			h.serveExport(w, r, record, r.URL.Query().Get("refresh") == "true")
+			h.handleExport(w, r, kind, id, "", r.URL.Query().Get("refresh") == "true")
 		case "share":
 			if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 				h.method(w)
@@ -333,50 +355,10 @@ func (h *Handler) share(w http.ResponseWriter, r *http.Request, parts []string) 
 		h.error(w, http.StatusForbidden, "share links cannot force refresh")
 		return
 	}
-	gated, release, ok := h.acquire(w, r)
-	if !ok {
-		return
-	}
-	defer release()
-	r = gated
-	record, err := h.store.Get(parts[1], parts[2])
-	if err != nil || !CheckShare(record, parts[3]) {
-		http.NotFound(w, r)
-		return
-	}
-	h.serveExport(w, r, record, false)
+	h.handleExport(w, r, parts[1], parts[2], parts[3], false)
 }
-func (h *Handler) serveExport(w http.ResponseWriter, r *http.Request, record Record, force bool) {
-	target := r.URL.Query().Get("target")
-	if target == "" {
-		target = "clash"
-	}
-	if record.Kind == "files" {
-		target = "text"
-	} else {
-		switch target {
-		case "clash", "shadowrocket", "uri", "loon", "egern":
-		default:
-			h.error(w, http.StatusBadRequest, "unknown subscription target")
-			return
-		}
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.Timeout)
-	defer cancel()
-	rd, state, err := h.export(ctx, record, target, force)
-	if err != nil {
-		switch {
-		case errors.Is(err, context.DeadlineExceeded):
-			h.error(w, http.StatusGatewayTimeout, "export timed out")
-		case errors.Is(err, context.Canceled):
-			h.error(w, http.StatusRequestTimeout, "export cancelled")
-		case errors.Is(err, cache.ErrCapacity), errors.Is(err, cache.ErrUnavailable):
-			h.error(w, http.StatusServiceUnavailable, "export disk space unavailable")
-		default:
-			h.error(w, http.StatusUnprocessableEntity, err.Error())
-		}
-		return
-	}
+func (h *Handler) writeExport(w http.ResponseWriter, r *http.Request, rd types.ResponseData, state string) {
+	ctx := r.Context()
 	// A slow client must not hold a private export slot indefinitely.
 	controller := http.NewResponseController(w)
 	if deadline, ok := ctx.Deadline(); ok {
@@ -449,7 +431,23 @@ func (h *Handler) export(ctx context.Context, r Record, target string, force boo
 	f := &flight{done: make(chan struct{}), forced: force}
 	h.flights[key] = f
 	h.mu.Unlock()
-	f.body, f.err = h.produce(ctx, r, key, target)
+	if r.Kind == "subscriptions" {
+		if _, prepared := ctx.Value(preparedNodesKey{}).([]subscription.Node); !prepared {
+			nodes, release, err := h.prepare(ctx, r, force)
+			if err != nil {
+				f.err = err
+				h.note(r, target, started, err)
+			} else {
+				ctx = context.WithValue(ctx, preparedNodesKey{}, nodes)
+				f.body, f.err = h.produce(ctx, r, key, target)
+				release()
+			}
+		} else {
+			f.body, f.err = h.produce(ctx, r, key, target)
+		}
+	} else {
+		f.body, f.err = h.produce(ctx, r, key, target)
+	}
 	h.mu.Lock()
 	delete(h.flights, key)
 	close(f.done)
@@ -539,7 +537,7 @@ func (h *Handler) produce(ctx context.Context, r Record, key, target string) (ou
 		return types.ResponseData{}, err
 	}
 	if h.cfg.Cache != nil {
-		if current, err := h.store.Get(r.Kind, r.ID); err != nil || revision(current) != revision(r) {
+		if current, err := h.store.Meta(r.Kind, r.ID); err != nil || revision(current.record()) != revision(r) {
 			return types.ResponseData{}, ErrConflict
 		}
 		if rd.Headers == nil {
@@ -668,6 +666,8 @@ func canonicalPath(path string) (string, error) {
 // must not be duplicated by an unbounded number of concurrent share requests.
 func (h *Handler) acquire(w http.ResponseWriter, r *http.Request) (*http.Request, func(), bool) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.Timeout)
+	h.foregroundWaiters.Add(1)
+	defer func() { h.foregroundWaiters.Add(-1); h.signal() }()
 	if ctx.Err() != nil {
 		cancel()
 		h.error(w, http.StatusRequestTimeout, "export cancelled")
@@ -675,7 +675,7 @@ func (h *Handler) acquire(w http.ResponseWriter, r *http.Request) (*http.Request
 	}
 	select {
 	case h.slots <- struct{}{}:
-		return r.WithContext(ctx), func() { <-h.slots; cancel() }, true
+		return r.WithContext(ctx), func() { <-h.slots; cancel(); h.signal() }, true
 	case <-ctx.Done():
 		cancel()
 		status := http.StatusGatewayTimeout
@@ -730,19 +730,12 @@ func (h *Handler) readNodes(ctx context.Context, r Record) ([]subscription.Node,
 }
 
 func outputKey(r Record, target string) string {
-	b, _ := json.Marshal(struct {
-		Schema   string
-		ID       string
-		Spec     Spec
-		Revision string
-		Target   string
-	}{"manager-output-v2", r.ID, r.Spec, revision(r), target})
-	return "managed:" + digest(string(b))
+	return "managed:v3:" + digest(r.ID+"\x00"+revision(r)+"\x00"+target)
 }
 func (h *Handler) exportFailure(r Record, target string, force bool, err error) (types.ResponseData, string, error) {
 	h.stats.exportErrors.Add(1)
 	if !force && !r.Spec.Refresh.DisableStale && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrConflict) {
-		if current, e := h.store.Get(r.Kind, r.ID); e == nil && revision(current) == revision(r) {
+		if current, e := h.store.Meta(r.Kind, r.ID); e == nil && revision(current.record()) == revision(r) {
 			if rd, ok := h.cfg.Cache.GetRetained(outputKey(r, target)); ok {
 				h.stats.staleResponses.Add(1)
 				return rd, "STALE", nil
@@ -750,4 +743,19 @@ func (h *Handler) exportFailure(r Record, target string, force bool, err error) 
 		}
 	}
 	return types.ResponseData{}, "", err
+}
+
+func (h *Handler) validOrigin(w http.ResponseWriter, r *http.Request) bool {
+	if origin := r.Header.Get("Origin"); origin != "" {
+		u, err := url.Parse(origin)
+		scheme := "http"
+		if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+			scheme = "https"
+		}
+		if err != nil || u.Host != r.Host || u.Scheme != scheme || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+			h.error(w, http.StatusForbidden, "cross-origin management request rejected")
+			return false
+		}
+	}
+	return true
 }

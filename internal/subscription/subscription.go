@@ -168,7 +168,7 @@ func validate(n Node) error {
 			}
 		}
 	}
-	for _, k := range []string{"password", "uuid", "username", "cipher", "sni", "servername", "network", "flow", "client-fingerprint", "obfs", "obfs-password", "udp-relay-mode"} {
+	for _, k := range []string{"password", "uuid", "username", "cipher", "sni", "servername", "network", "flow", "client-fingerprint", "obfs", "obfs-password", "udp-relay-mode", "packet-encoding"} {
 		if v, ok := n[k]; ok {
 			if _, ok := v.(string); !ok {
 				return fmt.Errorf("%s must be string", k)
@@ -180,7 +180,7 @@ func validate(n Node) error {
 		if text(n["cipher"]) == "" || text(n["password"]) == "" {
 			return errors.New("SS requires cipher and password")
 		}
-	case "trojan", "hysteria2":
+	case "trojan", "hysteria2", "anytls":
 		if text(n["password"]) == "" {
 			return errors.New("node requires password")
 		}
@@ -307,7 +307,7 @@ func parseURI(raw string) (Node, error) {
 		}
 	}
 	switch typ {
-	case "ss", "trojan", "vless", "http", "https", "socks5", "hysteria2":
+	case "ss", "trojan", "vless", "http", "https", "socks5", "hysteria2", "anytls":
 	default:
 		return nil, errors.New("unsupported node URI scheme")
 	}
@@ -339,7 +339,7 @@ func parseURI(raw string) (Node, error) {
 			user, password = parts[0], parts[1]
 		}
 		n["cipher"], n["password"] = user, password
-	case "trojan", "hysteria2":
+	case "trojan", "hysteria2", "anytls":
 		if hasPass {
 			return nil, errors.New("password containing colon must be percent encoded")
 		}
@@ -367,9 +367,11 @@ func parseURI(raw string) (Node, error) {
 	keys := ""
 	switch typ {
 	case "vless":
-		keys = "sni security type path host serviceName flow pbk sid fp encryption alpn"
+		keys = "sni security type path host serviceName flow pbk sid fp encryption alpn packetEncoding"
 	case "trojan":
 		keys = "sni security type path host pbk sid fp alpn"
+	case "anytls":
+		keys = "sni security type insecure udp packetEncoding packet_encoding xudp alpn fp"
 	case "hysteria2":
 		keys = "sni insecure obfs obfs-password"
 	}
@@ -389,6 +391,44 @@ func parseURI(raw string) (Node, error) {
 		if q.Get(src) != "" {
 			n[dst] = q.Get(src)
 		}
+	}
+	encoding := ""
+	for _, key := range []string{"packetEncoding", "packet_encoding"} {
+		if value := q.Get(key); value != "" {
+			if encoding != "" && encoding != value {
+				return nil, errors.New("conflicting packet encoding parameters")
+			}
+			encoding = value
+		}
+	}
+	if value := q.Get("xudp"); value != "" {
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			return nil, errors.New("invalid xudp flag")
+		}
+		value = "none"
+		if enabled {
+			value = "xudp"
+		}
+		if encoding != "" && encoding != value {
+			return nil, errors.New("conflicting packet encoding parameters")
+		}
+		encoding = value
+	}
+	if encoding != "" {
+		switch encoding {
+		case "none", "xudp", "packetaddr":
+			n["packet-encoding"] = encoding
+		default:
+			return nil, errors.New("invalid packet encoding")
+		}
+	}
+	if value := q.Get("udp"); value != "" {
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			return nil, errors.New("invalid udp flag")
+		}
+		n["udp"] = enabled
 	}
 	if q.Get("encryption") != "" && q.Get("encryption") != "none" {
 		return nil, errors.New("unsupported VLESS encryption")
@@ -445,6 +485,18 @@ func parseURI(raw string) (Node, error) {
 		n["grpc-opts"] = map[string]any{"grpc-service-name": q.Get("serviceName")}
 	} else if q.Get("serviceName") != "" {
 		return nil, errors.New("serviceName requires gRPC")
+	}
+	// Sub-Store URI parsers enable UDP by default for VLESS and AnyTLS.
+	// Keep this explicit so native Egern output does not default to UDP off.
+	if typ == "vless" || typ == "anytls" {
+		if _, ok := n["udp"]; !ok {
+			n["udp"] = true
+		}
+		if flag(n, "tls") {
+			if _, ok := n["skip-cert-verify"]; !ok {
+				n["skip-cert-verify"] = false
+			}
+		}
 	}
 	return n, nil
 }

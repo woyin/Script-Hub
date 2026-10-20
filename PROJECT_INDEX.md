@@ -34,11 +34,11 @@ Script Hub（Go 重写版）是一个代理规则与脚本转换服务，完整�
 - [详见 FOLDER_INDEX.md](internal/config/FOLDER_INDEX.md)
 
 ### internal/manager
-- 私有订阅/文件 CRUD、独立永久数据存储、Backend URL 管理鉴权、资源级分享 token、源/导出磁盘缓存、条件更新、后台刷新及状态指标、原子快照恢复、编辑版本校验与操作页面。
+- 原版 Sub-Store 发布 API 兼容、私有订阅/文件 CRUD、独立永久数据存储、Backend URL 管理鉴权、资源级分享 token、源/导出磁盘缓存、元数据索引与独立缓存读取、条件更新与失败冷却、按到期时间调度、原子快照恢复及去重、编辑版本校验与操作页面。
 - [详见 FOLDER_INDEX.md](internal/manager/FOLDER_INDEX.md)
 
 ### internal/subscription
-- Clash YAML、URI/Base64 节点输入、处理和 Clash/Shadowrocket/Loon/Egern 输出，严格拒绝无法保留的字段。
+- Clash YAML、URI/Base64 节点输入、处理和 Clash/Shadowrocket/Loon/Egern 输出，按目标规则转换已识别的客户端提示，拒绝未知字段和未支持的传输。
 - [详见 FOLDER_INDEX.md](internal/subscription/FOLDER_INDEX.md)
 - [设计计划](docs/native-substore-plan.md)
 

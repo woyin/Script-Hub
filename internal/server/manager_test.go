@@ -82,3 +82,53 @@ func TestManagementServerWiringAndSSRF(t *testing.T) {
 		t.Fatal("public homepage leaked manager key or broke")
 	}
 }
+
+func TestSubStoreCompatibleServerRoutes(t *testing.T) {
+	srv := New(managerConfig(t))
+	defer srv.Shutdown(context.Background())
+	if srv.startupErr != nil {
+		t.Fatal(srv.startupErr)
+	}
+	send := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		r := httptest.NewRecorder()
+		srv.router.ServeHTTP(r, req)
+		return r
+	}
+	base := "/" + managerTestKey
+	if r := send("POST", base+"/api/files", `{"name":"client","source":"local","content":"before"}`); r.Code != 201 {
+		t.Fatal("compatibility create route", r.Code)
+	}
+	if r := send("GET", base+"/api/wholeFile/client", ""); r.Code != 200 || !strings.Contains(r.Body.String(), `"status":"success"`) {
+		t.Fatal("wholeFile route", r.Code)
+	}
+	if r := send("PATCH", base+"/api/file/client", `{"content":"after"}`); r.Code != 200 {
+		t.Fatal("PATCH route", r.Code)
+	}
+	if r := send("GET", base+"/api/file/client", ""); r.Code != 200 || r.Body.String() != "after" {
+		t.Fatal("raw file route", r.Code)
+	}
+	for _, path := range []string{"/api/subs", "/api/wholeFile/client", "/wrong/api/files"} {
+		if r := send("GET", path, ""); r.Code != 404 {
+			t.Fatal("unprotected compatibility route", r.Code)
+		}
+	}
+	if r := send("GET", "/manage/"+managerTestKey+"/api/wholeFile/client", ""); r.Code != 200 {
+		t.Fatal("nonconflicting alias route", r.Code)
+	}
+	for _, path := range []string{"/healthz", "/version", "/formats", "/"} {
+		if r := send("GET", path, ""); r.Code != 200 {
+			t.Fatal("existing route changed", path, r.Code)
+		}
+	}
+	req := httptest.NewRequest("GET", base+"/api/files", nil)
+	req.Header.Set("Origin", "https://other.example")
+	r := httptest.NewRecorder()
+	srv.router.ServeHTTP(r, req)
+	if r.Code != 403 {
+		t.Fatal("compatibility origin gate missing")
+	}
+}

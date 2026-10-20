@@ -26,6 +26,8 @@ func (s *Server) setupRoutes() {
 	if s.management != nil {
 		s.router.Handle("/manage/*", s.management)
 		s.router.Handle("/share/*", s.management)
+		s.router.Handle("/"+s.cfg.ManagerBackendKey+"/*", s.management)
+		s.router.Handle("/"+s.cfg.ManagerBackendKey, s.management)
 	}
 	s.router.Post("/api/convert", s.convertAPIHandler)
 	s.router.Get("/api/convert", s.convertAPIHelpHandler)

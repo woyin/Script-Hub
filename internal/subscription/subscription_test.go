@@ -104,7 +104,6 @@ func TestStrictCompatibility(t *testing.T) {
 		node         Node
 	}{
 		{"unknown field", "egern", Node{"name": "n", "type": "ss", "server": "x", "port": 443, "cipher": "aes-128-gcm", "password": "p", "plugin": "obfs"}},
-		{"unknown fingerprint", "egern", func() Node { n := base(); n["client-fingerprint"] = "chrome"; return n }()},
 		{"nonzero alterId", "egern", Node{"name": "n", "type": "vmess", "server": "x", "port": 443, "uuid": "id", "alterId": 4}},
 		{"grpc Loon", "loon", func() Node {
 			n := base()

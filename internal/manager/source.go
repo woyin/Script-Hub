@@ -49,10 +49,10 @@ func sourceKey(source string, headers map[string]string) string {
 // Source bytes live only in the common disk cache. Locks merge requests across targets.
 func (h *Handler) fetch(ctx context.Context, source string, headers map[string]string, dst io.Writer) (err error) {
 	started := time.Now()
-	defer func() { h.stats.observe("fetch", time.Since(started)) }()
-	if h.cfg.Cache == nil {
-		return h.fetchRaw(ctx, source, headers, dst)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
+	defer func() { h.stats.observe("fetch", time.Since(started)) }()
 	key := sourceKey(source, headers)
 	force, _ := ctx.Value(refreshSourceKey{}).(time.Time)
 	if rd, ok := h.cfg.Cache.Get(key); ok {
@@ -65,6 +65,19 @@ func (h *Handler) fetch(ctx context.Context, source string, headers map[string]s
 		closeBody(rd)
 	}
 	h.sourceMu.Lock()
+	if until := h.sourceFailures[key]; force.IsZero() && time.Now().Before(until) {
+		h.sourceMu.Unlock()
+		h.stats.sourceCooldownHits.Add(1)
+		return errSourceCoolingDown
+	}
+	if h.cfg.Cache == nil {
+		h.sourceMu.Unlock()
+		err = h.fetchRaw(ctx, source, headers, dst)
+		h.sourceMu.Lock()
+		h.recordSourceResult(key, err)
+		h.sourceMu.Unlock()
+		return err
+	}
 	if done := h.sourceFlights[key]; done != nil {
 		h.sourceMu.Unlock()
 		select {
@@ -88,6 +101,7 @@ func (h *Handler) fetch(ctx context.Context, source string, headers map[string]s
 	defer func() {
 		h.sourceMu.Lock()
 		delete(h.sourceFlights, key)
+		h.recordSourceResult(key, err)
 		done.err = err
 		close(done.done)
 		h.sourceMu.Unlock()
@@ -180,4 +194,35 @@ func (h *Handler) fetch(ctx context.Context, source string, headers map[string]s
 	}
 	defer closeBody(fresh)
 	return copyBody(&budgetWriter{dst: dst, left: h.cfg.SourceMaxBytes}, fresh)
+}
+
+var errSourceCoolingDown = errors.New("remote source is cooling down after a failure")
+
+// Caller holds sourceMu. Only upstream failures cool down; local disk and cancellation do not.
+func (h *Handler) recordSourceResult(key string, err error) {
+	if err == nil {
+		delete(h.sourceFailures, key)
+		return
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, cache.ErrCapacity) || errors.Is(err, cache.ErrUnavailable) {
+		return
+	}
+	now := time.Now()
+	for k, until := range h.sourceFailures {
+		if !now.Before(until) {
+			delete(h.sourceFailures, k)
+		}
+	}
+	if len(h.sourceFailures) >= 4096 {
+		var oldest string
+		var at time.Time
+		for k, t := range h.sourceFailures {
+			if oldest == "" || t.Before(at) {
+				oldest = k
+				at = t
+			}
+		}
+		delete(h.sourceFailures, oldest)
+	}
+	h.sourceFailures[key] = now.Add(h.cfg.SourceRetryCooldown)
 }

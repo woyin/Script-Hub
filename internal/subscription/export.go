@@ -22,8 +22,8 @@ func Capabilities() map[string]any {
 	return map[string]any{
 		"inputs":    []string{"clash-yaml", "uri", "base64-uri"},
 		"targets":   []string{"clash", "shadowrocket", "uri", "loon", "egern"},
-		"protocols": map[string][]string{"clash": {"preserve-clash-fields"}, "shadowrocket": {"ss", "trojan", "vmess", "vless", "http", "socks5", "hysteria2"}, "uri": {"ss", "trojan", "vmess", "vless", "http", "socks5", "hysteria2"}, "loon": {"ss", "trojan", "vmess", "vless", "http", "socks5", "hysteria2"}, "egern": {"ss", "trojan", "vmess", "vless", "http", "socks5", "hysteria2", "tuic"}},
-		"strict":    true, "notes": []string{"未知或无法表达的字段会使整个导出失败。", "Clash 输出仅包含 proxies，不是完整客户端配置。", "Shadowrocket 使用标准 URI/Base64，仍需真实客户端导入验收。", "首版 Loon 不输出 gRPC/TUIC；Egern 没有已确认的 client-fingerprint 映射。"},
+		"protocols": map[string][]string{"clash": {"preserve-clash-fields"}, "shadowrocket": {"ss", "trojan", "vmess", "vless", "http", "socks5", "hysteria2", "anytls"}, "uri": {"ss", "trojan", "vmess", "vless", "http", "socks5", "hysteria2", "anytls"}, "loon": {"ss", "trojan", "vmess", "vless", "http", "socks5", "hysteria2", "anytls"}, "egern": {"ss", "trojan", "vmess", "vless", "http", "socks5", "hysteria2", "tuic", "anytls"}},
+		"strict":    true, "notes": []string{"未知字段及不支持的协议或传输会使导出失败；已识别的客户端提示按目标格式处理。", "Clash 输出仅包含 proxies，不是完整客户端配置。", "Shadowrocket 使用标准 URI/Base64，仍需真实客户端导入验收。", "Loon 不输出 gRPC/TUIC；Egern 按原版 Sub-Store 的目标字段规则转换客户端提示。"},
 	}
 }
 func Export(nodes []Node, target string) (Output, error) {
@@ -117,12 +117,14 @@ func fieldsFor(n Node) string {
 	switch text(n["type"]) {
 	case "ss":
 		return base + "cipher password udp tfo"
+	case "anytls":
+		return base + "password tls servername sni skip-cert-verify udp tfo network reality-opts alpn client-fingerprint packet-encoding"
 	case "trojan":
 		return base + "password tls servername sni skip-cert-verify udp tfo network ws-opts reality-opts alpn client-fingerprint"
 	case "vmess":
 		return base + "uuid cipher alterId tls servername sni skip-cert-verify udp tfo network ws-opts grpc-opts reality-opts alpn client-fingerprint"
 	case "vless":
-		return base + "uuid flow tls servername sni skip-cert-verify udp tfo network ws-opts grpc-opts reality-opts alpn client-fingerprint"
+		return base + "uuid flow packet-encoding tls servername sni skip-cert-verify udp tfo network ws-opts grpc-opts reality-opts alpn client-fingerprint"
 	case "http":
 		return base + "username password tls servername sni skip-cert-verify tfo"
 	case "socks5":
@@ -142,7 +144,7 @@ func transport(n Node) string {
 	return v
 }
 func secure(n Node) bool {
-	return flag(n, "tls") || text(n["type"]) == "trojan" || text(n["type"]) == "hysteria2" || text(n["type"]) == "tuic"
+	return flag(n, "tls") || text(n["type"]) == "anytls" || text(n["type"]) == "trojan" || text(n["type"]) == "hysteria2" || text(n["type"]) == "tuic"
 }
 func servername(n Node) (string, error) {
 	a, b := text(n["servername"]), text(n["sni"])
@@ -255,8 +257,14 @@ func validateTransport(n Node) error {
 	if err := only(n, fieldsFor(n)); err != nil {
 		return err
 	}
+	if v, ok := n["packet-encoding"]; ok {
+		s, valid := v.(string)
+		if !valid || (s != "none" && s != "xudp" && s != "packetaddr") {
+			return fmt.Errorf("invalid packet-encoding")
+		}
+	}
 	switch text(n["type"]) {
-	case "ss", "trojan", "vmess", "vless", "http", "socks5", "hysteria2", "tuic":
+	case "ss", "trojan", "vmess", "vless", "http", "socks5", "hysteria2", "tuic", "anytls":
 	default:
 		return fmt.Errorf("unsupported protocol")
 	}
@@ -267,6 +275,9 @@ func validateTransport(n Node) error {
 		return err
 	}
 	network := transport(n)
+	if text(n["type"]) == "anytls" && network != "tcp" {
+		return fmt.Errorf("AnyTLS requires native TLS transport")
+	}
 	if network != "tcp" && network != "ws" && network != "grpc" {
 		return fmt.Errorf("unsupported transport %s", network)
 	}
@@ -311,7 +322,7 @@ func validateTransport(n Node) error {
 			}
 		}
 	}
-	if text(n["type"]) == "trojan" || text(n["type"]) == "hysteria2" || text(n["type"]) == "tuic" {
+	if text(n["type"]) == "anytls" || text(n["type"]) == "trojan" || text(n["type"]) == "hysteria2" || text(n["type"]) == "tuic" {
 		if v, ok := n["tls"]; ok && v == false {
 			return fmt.Errorf("protocol requires TLS")
 		}
@@ -328,9 +339,10 @@ func toEgern(n Node) (map[string]any, error) {
 	if err := validateTransport(n); err != nil {
 		return nil, err
 	}
-	if n["client-fingerprint"] != nil {
-		return nil, fmt.Errorf("client-fingerprint has no verified Egern mapping")
-	}
+	// Match Sub-Store's native Egern producer: packet-encoding, browser
+	// client-fingerprint and VMess/VLESS/Trojan ALPN are source-side hints,
+	// not native Egern fields. Validate the source, then select target fields.
+	// Browser fingerprints must not be mapped to certificate SHA256 pinning.
 	typ := text(n["type"])
 	protocol := typ
 	p := map[string]any{"name": n["name"], "server": n["server"], "port": n["port"]}
@@ -366,9 +378,6 @@ func toEgern(n Node) (map[string]any, error) {
 		}
 		p["method"], p["password"] = cipher, n["password"]
 	case "vmess", "vless":
-		if len(ap) > 0 {
-			return nil, fmt.Errorf("alpn has no verified Egern VMess/VLESS mapping")
-		}
 		p["user_id"] = n["uuid"]
 		if typ == "vmess" {
 			if number(n, "alterId") != 0 {
@@ -428,13 +437,23 @@ func toEgern(n Node) (map[string]any, error) {
 			}
 			p["transport"] = map[string]any{"grpc": g}
 		}
-	case "trojan":
+	case "anytls":
+		if transport(n) != "tcp" {
+			return nil, fmt.Errorf("AnyTLS requires native TLS transport")
+		}
 		p["password"] = n["password"]
 		for k, v := range tls {
 			p[k] = v
 		}
-		if len(ap) > 0 {
-			return nil, fmt.Errorf("alpn has no verified Egern Trojan mapping")
+		// Egern defaults to skipping certificate validation for AnyTLS. Preserve
+		// the source's verified-by-default behavior when the flag is absent.
+		if _, ok := p["skip_tls_verify"]; !ok {
+			p["skip_tls_verify"] = false
+		}
+	case "trojan":
+		p["password"] = n["password"]
+		for k, v := range tls {
+			p[k] = v
 		}
 		if transport(n) == "grpc" {
 			return nil, fmt.Errorf("Egern Trojan gRPC is unsupported")
@@ -569,6 +588,11 @@ func toLoon(n Node) (string, error) {
 			return "", fmt.Errorf("unsupported Loon Shadowsocks cipher")
 		}
 		parts = append(parts, cipher)
+		if err := password("password"); err != nil {
+			return "", err
+		}
+	case "anytls":
+		parts[0] = "AnyTLS"
 		if err := password("password"); err != nil {
 			return "", err
 		}
@@ -717,14 +741,14 @@ func toURI(n Node) (string, error) {
 	typ := text(n["type"])
 	// Client-specific flags lack a portable URI representation; never silently discard them.
 	for _, k := range []string{"udp", "tfo"} {
-		if _, ok := n[k]; ok {
+		if _, ok := n[k]; ok && !(k == "udp" && (typ == "anytls" || typ == "vless" && flag(n, "udp"))) {
 			return "", fmt.Errorf("%s has no portable URI mapping", k)
 		}
 	}
 	if typ == "tuic" {
 		return "", fmt.Errorf("TUIC URI is not implemented")
 	}
-	if typ != "hysteria2" && flag(n, "skip-cert-verify") {
+	if typ != "hysteria2" && typ != "anytls" && flag(n, "skip-cert-verify") {
 		return "", fmt.Errorf("insecure TLS has no verified portable URI mapping")
 	}
 	host := net.JoinHostPort(text(n["server"]), strconv.Itoa(number(n, "port")))
@@ -780,11 +804,14 @@ func toURI(n Node) (string, error) {
 	u := url.URL{Scheme: typ, Host: host, Fragment: text(n["name"])}
 	q := url.Values{}
 	switch typ {
-	case "trojan", "hysteria2":
+	case "trojan", "hysteria2", "anytls":
 		u.User = url.User(text(n["password"]))
 	case "vless":
 		u.User = url.User(text(n["uuid"]))
 		q.Set("encryption", "none")
+		if v := text(n["packet-encoding"]); v != "" {
+			q.Set("packetEncoding", v)
+		}
 	case "http", "socks5":
 		if secure(n) {
 			if typ == "socks5" {
@@ -796,7 +823,18 @@ func toURI(n Node) (string, error) {
 			u.User = url.UserPassword(text(n["username"]), text(n["password"]))
 		}
 	}
-	if typ == "trojan" || typ == "vless" {
+	if typ == "anytls" {
+		if v, ok := n["udp"]; ok {
+			q.Set("udp", strconv.FormatBool(v.(bool)))
+		}
+		if v, ok := n["skip-cert-verify"]; ok {
+			q.Set("insecure", strconv.FormatBool(v.(bool)))
+		}
+		if v := text(n["packet-encoding"]); v != "" {
+			q.Set("packetEncoding", v)
+		}
+	}
+	if typ == "trojan" || typ == "vless" || typ == "anytls" {
 		if secure(n) {
 			q.Set("security", "tls")
 		}

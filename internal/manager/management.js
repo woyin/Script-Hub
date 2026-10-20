@@ -878,7 +878,10 @@ async function deleteResource(record) {
 function renderProfile() {
   $("page").classList.remove("simple");
   $("page").innerHTML =
-    `<div class="profile-hero">${art("subscriptions")}<div><h2>Sub-Store</h2><p>Script Hub · 原生 Go 后端</p></div></div><h2 class="group-title">外观设置</h2><div class="form-card"><button class="settings-row" id="profileTheme"><span class="settings-label">${icon("sun")}主题</span><span class="settings-value">${preferences.theme === "dark" ? "基础夜间" : "基础日间"}</span></button><div class="settings-row"><label class="settings-label" for="simpleSetting">${icon("simple")}简洁模式</label><input type="checkbox" class="switch" id="simpleSetting" ${preferences.simple ? "checked" : ""}></div><div class="settings-row"><label class="settings-label" for="dualSetting">${icon("grid")}双列显示</label><input type="checkbox" class="switch" id="dualSetting" ${preferences.dual ? "checked" : ""}></div></div><h2 class="group-title">后端</h2><div class="form-card"><div class="settings-row"><span class="settings-label">${icon("shield")}连接状态</span><span class="settings-value">当前 Backend URL</span></div><button class="settings-row" id="capabilities"><span class="settings-label">${icon("info")}兼容范围</span>${icon("right")}</button></div><h2 class="group-title">数据与运行状态</h2><div class="form-card"><button class="settings-row" id="backupManager"><span class="settings-label">${icon("download")}备份与恢复</span>${icon("right")}</button><button class="settings-row" id="managerMetrics"><span class="settings-label">${icon("info")}运行指标</span>${icon("right")}</button></div><h2 class="group-title">关于</h2><div class="form-card"><a class="settings-row" href="https://github.com/sub-store-org/Sub-Store-Front-End" target="_blank" rel="noreferrer noopener"><span class="settings-label">${icon("code")}原版前端</span><span class="settings-value">Sub-Store Front-End · GPL-3.0</span></a><a class="settings-row" href="https://github.com/woyin/Script-Hub" target="_blank" rel="noreferrer noopener"><span class="settings-label">${icon("code")}项目源码</span>${icon("right")}</a></div><p class="page-footer">Sub-Store 界面适配 · Script Hub<br>界面设计与素材遵循 GPL-3.0</p>`;
+    `<div class="profile-hero">${art("subscriptions")}<div><h2>Sub-Store</h2><p>Script Hub · 原生 Go 后端</p></div></div><h2 class="group-title">外观设置</h2><div class="form-card"><button class="settings-row" id="profileTheme"><span class="settings-label">${icon("sun")}主题</span><span class="settings-value">${preferences.theme === "dark" ? "基础夜间" : "基础日间"}</span></button><div class="settings-row"><label class="settings-label" for="simpleSetting">${icon("simple")}简洁模式</label><input type="checkbox" class="switch" id="simpleSetting" ${preferences.simple ? "checked" : ""}></div><div class="settings-row"><label class="settings-label" for="dualSetting">${icon("grid")}双列显示</label><input type="checkbox" class="switch" id="dualSetting" ${preferences.dual ? "checked" : ""}></div></div><h2 class="group-title">后端</h2><div class="form-card"><div class="settings-row"><span class="settings-label">${icon("shield")}连接状态</span><span class="settings-value">当前 Backend URL</span></div><button class="settings-row" id="copyCompatBackend"><span class="settings-label">${icon("code")}复制 Sub-Store Backend URL</span>${icon("right")}</button><button class="settings-row" id="capabilities"><span class="settings-label">${icon("info")}兼容范围</span>${icon("right")}</button></div><h2 class="group-title">数据与运行状态</h2><div class="form-card"><button class="settings-row" id="backupManager"><span class="settings-label">${icon("download")}备份与恢复</span>${icon("right")}</button><button class="settings-row" id="managerMetrics"><span class="settings-label">${icon("info")}运行指标</span>${icon("right")}</button></div><h2 class="group-title">关于</h2><div class="form-card"><a class="settings-row" href="https://github.com/sub-store-org/Sub-Store-Front-End" target="_blank" rel="noreferrer noopener"><span class="settings-label">${icon("code")}原版前端</span><span class="settings-value">Sub-Store Front-End · GPL-3.0</span></a><a class="settings-row" href="https://github.com/woyin/Script-Hub" target="_blank" rel="noreferrer noopener"><span class="settings-label">${icon("code")}项目源码</span>${icon("right")}</a></div><p class="page-footer">Sub-Store 界面适配 · Script Hub<br>界面设计与素材遵循 GPL-3.0</p>`;
+  $("copyCompatBackend").onclick = run(() =>
+    copyText(location.origin + base.replace(/^\/manage\//, "/")),
+  );
   $("backupManager").onclick = run(showBackups);
   $("managerMetrics").onclick = run(showMetrics);
   $("profileTheme").onclick = () => {
@@ -1007,6 +1010,7 @@ async function showMetrics() {
   const m = await api("metrics");
   const labels = {
     sourceHits: "源缓存命中",
+    sourceCooldownHits: "上游失败冷却命中",
     sourceMisses: "上游请求",
     notModified: "上游内容未变化（304）",
     fetchErrors: "下载失败",
@@ -1041,11 +1045,21 @@ async function showMetrics() {
   }
 }
 async function showBackups() {
-  const rows = await api("backups");
+  const [rows, status] = await Promise.all([
+    api("backups"),
+    api("backup-status"),
+  ]);
+  const backupDate = (v) =>
+    v && !v.startsWith("0001-") ? formatDate(v) : "尚无";
   modal(
     "备份与恢复",
-    '<p class="hint">备份包含订阅地址和凭据，请妥善保管。最多保留 5 份、合计 64 MiB；每日自动创建一份。</p><div class="modal-actions"><button class="primary-button" id="createBackup">创建备份</button><button class="plain-button" id="chooseRestore">导入并恢复</button></div><input id="restoreFile" type="file" accept=".gz,application/gzip" hidden><div id="backupRows"></div>',
+    '<p class="hint">备份包含订阅地址和凭据，请妥善保管。最多保留 5 份、合计 64 MiB。每日自动检查，数据变化时才创建快照。</p><p class="hint" id="backupCheckStatus"></p><div class="modal-actions"><button class="primary-button" id="createBackup">创建备份</button><button class="plain-button" id="chooseRestore">导入并恢复</button></div><input id="restoreFile" type="file" accept=".gz,application/gzip" hidden><div id="backupRows"></div>',
   );
+  $("backupCheckStatus").textContent =
+    "最近检查：" +
+    backupDate(status.checkedAt) +
+    "；最近快照：" +
+    backupDate(status.lastSnapshotAt);
   for (const b of rows.slice().reverse()) {
     const item = document.createElement("div");
     item.className = "settings-row";

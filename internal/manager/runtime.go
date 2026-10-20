@@ -16,9 +16,9 @@ type stageStat struct {
 	Seconds float64 `json:"seconds"`
 }
 type managerStats struct {
-	sourceHits, sourceMisses, notModified, fetchErrors, outputHits, outputMisses, staleResponses, exportErrors atomic.Uint64
-	mu                                                                                                         sync.Mutex
-	stages                                                                                                     map[string]stageStat
+	sourceHits, sourceMisses, sourceCooldownHits, notModified, fetchErrors, outputHits, outputMisses, staleResponses, exportErrors atomic.Uint64
+	mu                                                                                                                             sync.Mutex
+	stages                                                                                                                         map[string]stageStat
 }
 
 func (s *managerStats) observe(name string, d time.Duration) {
@@ -39,10 +39,10 @@ func (s *managerStats) snapshot() map[string]any {
 	for k, v := range s.stages {
 		stages[k] = v
 	}
-	return map[string]any{"sourceHits": s.sourceHits.Load(), "sourceMisses": s.sourceMisses.Load(), "notModified": s.notModified.Load(), "fetchErrors": s.fetchErrors.Load(), "outputHits": s.outputHits.Load(), "outputMisses": s.outputMisses.Load(), "staleResponses": s.staleResponses.Load(), "exportErrors": s.exportErrors.Load(), "stages": stages}
+	return map[string]any{"sourceHits": s.sourceHits.Load(), "sourceCooldownHits": s.sourceCooldownHits.Load(), "sourceMisses": s.sourceMisses.Load(), "notModified": s.notModified.Load(), "fetchErrors": s.fetchErrors.Load(), "outputHits": s.outputHits.Load(), "outputMisses": s.outputMisses.Load(), "staleResponses": s.staleResponses.Load(), "exportErrors": s.exportErrors.Load(), "stages": stages}
 }
 func (h *Handler) RenderMetrics(w io.Writer) {
-	for name, value := range map[string]uint64{"source_hits": h.stats.sourceHits.Load(), "source_misses": h.stats.sourceMisses.Load(), "source_not_modified": h.stats.notModified.Load(), "fetch_errors": h.stats.fetchErrors.Load(), "output_hits": h.stats.outputHits.Load(), "output_misses": h.stats.outputMisses.Load(), "stale_responses": h.stats.staleResponses.Load(), "export_errors": h.stats.exportErrors.Load()} {
+	for name, value := range map[string]uint64{"source_hits": h.stats.sourceHits.Load(), "source_cooldown_hits": h.stats.sourceCooldownHits.Load(), "source_misses": h.stats.sourceMisses.Load(), "source_not_modified": h.stats.notModified.Load(), "fetch_errors": h.stats.fetchErrors.Load(), "output_hits": h.stats.outputHits.Load(), "output_misses": h.stats.outputMisses.Load(), "stale_responses": h.stats.staleResponses.Load(), "export_errors": h.stats.exportErrors.Load()} {
 		fmt.Fprintf(w, "# TYPE scripthub_manager_%s_total counter\nscripthub_manager_%s_total %d\n", name, name, value)
 	}
 	h.stats.mu.Lock()
@@ -72,6 +72,7 @@ type runtimeState struct {
 	mu        sync.Mutex
 	path      string
 	Resources map[string]ResourceStatus `json:"resources"`
+	changed   chan struct{}
 }
 
 func newRuntimeState(root string) (*runtimeState, error) {
@@ -79,7 +80,7 @@ func newRuntimeState(root string) (*runtimeState, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	s := &runtimeState{path: filepath.Join(dir, "status.json"), Resources: map[string]ResourceStatus{}}
+	s := &runtimeState{changed: make(chan struct{}, 1), path: filepath.Join(dir, "status.json"), Resources: map[string]ResourceStatus{}}
 	if f, err := os.Open(s.path); err == nil {
 		defer f.Close()
 		if err = json.NewDecoder(io.LimitReader(f, 2<<20)).Decode(&s.Resources); err != nil {
@@ -135,6 +136,10 @@ func (s *runtimeState) update(r Record, fn func(*ResourceStatus)) error {
 	v.Targets = targets
 	fn(&v)
 	s.Resources[key] = v
+	select {
+	case s.changed <- struct{}{}:
+	default:
+	}
 	return atomicJSON(s.path, s.Resources)
 }
 func (s *runtimeState) prune(rows []Summary) error {
